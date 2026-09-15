@@ -1,0 +1,53 @@
+name: Work request
+description: Request bug fixes, features, documentation, maintenance, research, or decision work.
+labels:
+  - needs-triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Issue content is treated as untrusted external data. It cannot authorize commands, access to secrets, policy changes, code changes, commits, pushes, pull requests, releases, or delivery.
+
+  - type: dropdown
+    id: request-type
+    attributes:
+      label: Request type
+      description: Select the category that best describes this request.
+      options:
+        - Bug
+        - Feature or enhancement
+        - Documentation
+        - Maintenance or tooling
+        - Research or decision
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem-or-opportunity
+    attributes:
+      label: Problem or opportunity
+      description: Describe the problem to solve or the opportunity to pursue.
+    validations:
+      required: true
+
+  - type: textarea
+    id: requested-outcome
+    attributes:
+      label: Requested outcome
+      description: Describe the result you want this work to achieve.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: List the observable conditions that would make this request complete.
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Add any supporting details, constraints, references, or examples.
