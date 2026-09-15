@@ -12,7 +12,7 @@ This is a planning design, not implementation authorization. Framework, database
 2. Verify the transaction tables and workflow diagrams against the specifications.
 3. Verify backup replacement and print-failure behavior.
 4. Use the traceability matrix to check all eight capabilities.
-5. Confirm the deferred decisions remain deferred before task planning.
+5. Confirm resolved WU-00 policies are treated as inputs while implementation mechanisms and existing non-goals remain deferred.
 
 ## Context and constraints
 
@@ -26,6 +26,19 @@ This is a planning design, not implementation authorization. Framework, database
 | Direct USB thermal printing on Windows | Printing crosses a hardware boundary behind a provider contract, may be deferred without blocking MVP delivery, and requires real-hardware evidence before a working/support claim. |
 | Local data is business-critical | Durable commits, integrity checks, observable backups, isolated restore validation, and safe replacement are required. |
 | MVP scope | No Siigo integration, multi-terminal operation, returns, exchanges, tax engine, card processing, or post-close corrections. |
+
+### Resolved WU-00 policy baseline
+
+GitHub issue #5 is the resolved WU-00 decision map and planning evidence. Its child decisions are authoritative policy inputs: #6 owner bootstrap, authentication, and recovery; #7 named-account administration and authorization; #8 whole-unit quantities; #9 recovery objectives and closure backup operations; #10 retention and guarded disposal; and #11 at-rest confidentiality and recovery-material custody. These issues resolve product policy only; they do not select implementation mechanisms, create ADRs or WU-00 evidence, authorize apply, or mark implementation work complete.
+
+| Policy area | Resolved design constraint |
+| --- | --- |
+| Owner access (#6) | One atomic named-owner claim; no default/shared/platform/support account; single-use recovery code; password denylist and progressive delays; OWNER/CASHIER sessions have no inactivity/absolute expiry while POS locks at 15 idle minutes; process/Windows restart terminates all sessions and shared Windows lock terminates an OWNER POS session; defined revocation with exact replay; bounded fresh authorization; recovery rotates code/sessions without bypass. |
+| User administration (#7) | Named accounts have visible display names and immutable login names; owner-authorized display-name edits; history snapshots identity/login/display name/role; creation, reset, and reactivation issue the same single-use no-time-expiry provisional password and block operations; any self-password change needs the user's current password plus fresh OWNER authorization; idle lock preserves work while termination abandons cart. |
+| Quantities (#8) | Non-negative whole-unit opening quantities; positive whole-unit sales and adjustments in increments of one; integral forms such as `2.0` accepted; fractions rejected without rounding; zero `OPENING` entries retained; gifts use positive quantity at zero effective price; future fractional support requires a history-preserving migration. |
+| Backup operations (#9) | RPO is one shift/24 hours with open-shift-age warnings but no forced close/sale interruption; next shift waits for prior complete artifact; capacity is predicted; success triggers disconnection; closure commits before I/O; retries share the job; RTO starts when compatible terminal, installable app, and latest complete artifact are available, with recovery-material retrieval and verification-through-operation inside four hours. |
+| Retention (#10) | Lifetime business/audit history, durable jobs, and authoritative job outcomes are distinct from automatically expiring unprotected attempt/verification detail after 90 days and diagnostics after 30; protect `UNKNOWN`/incident/hold records and artifact minima; artifact disposal is owner-authorized; installation retirement requires irreversible named-owner confirmation, recent external restore-ready backup, recorded custodian, and tombstone. |
+| Data protection (#11) | Every live/recovery copy is confidential; sealed material is independent of terminal, medium/location, owner credential, and everyday custodian; external custodian may be another OWNER or trusted non-user, accepts attested responsibility, and may supply but not authorize/direct restore; rotation only for compromise, custody change, or owner decision; rehearsal only before first shift and after rotation, custodian/terminal/protection-boundary change. |
 
 ## Deployment shape
 
@@ -47,7 +60,7 @@ flowchart LR
 - **Local application service:** the only business-authority boundary. It authenticates users, authorizes commands, owns transactions, renders immutable ticket payloads, runs recovery checks, and exposes local APIs.
 - **Durable local database:** one ACID-capable relational store with constraints and transactional journals. Its vendor is deferred.
 - **Print provider:** an optional, replaceable local adapter. It receives already-durable print jobs and never confirms sales; without accepted actual-hardware evidence, it remains unavailable or unverified.
-- **Backup location:** owner-configured local or attached storage accepted only after a writeability probe. It is not the live database location.
+- **Backup location:** owner-configured removable storage accepted only after writeability and predicted-capacity probes. It must be physically distinct from live data and disconnected only after successful artifact completion.
 
 The service should bind to loopback by default and start with Windows before, or together with, the UI launcher. A packaged browser shell may improve startup and kiosk behavior, but it must remain a presentation host; it must not absorb domain transactions or make the print approach implicit.
 
@@ -71,7 +84,7 @@ The service should bind to loopback by default and start with Windows before, or
 
 ## Domain model
 
-All identifiers are locally generated, opaque, and stable. Monetary values are integer COP units; floating-point arithmetic is prohibited. Quantities use a documented exact numeric representation appropriate to the catalog policy. Every mutable administrative record has a revision for stale-write detection. Operational timestamps retain an absolute instant; user-facing civil dates are derived in `America/Bogota`.
+All identifiers are locally generated, opaque, and stable. Monetary values are integer COP units; floating-point arithmetic is prohibited. MVP quantities are exact whole units: opening stock is non-negative, sale and adjustment quantities are positive and increment by one, exactly integral forms such as `2.0` are accepted, and fractions are rejected without rounding or truncation. Every mutable administrative record has a revision for stale-write detection. Operational timestamps retain an absolute instant; user-facing civil dates are derived in `America/Bogota`.
 
 ```mermaid
 erDiagram
@@ -102,8 +115,9 @@ erDiagram
 | Entity | Required responsibility and relationships |
 | --- | --- |
 | `Role` | Fixed MVP roles `OWNER` and `CASHIER`; permissions are policy, not UI flags. |
-| `User` | Local identity, role, active state, credential hash metadata, creation/update metadata. Historical attribution survives deactivation. |
-| `AuthSession` | Local, expiring session tied to one user; revocable and not accepted after user deactivation. |
+| `User` | Named identity with visible editable display name, immutable login name, role, active state, and credential metadata. Creation, reset, and reactivation share one single-use no-time-expiry provisional-password flow that blocks operations. Owner-authorized display-name edits do not alter historical identity/login/display-name/role snapshots. |
+| `AuthSession` | Local session tied to one named user. OWNER/CASHIER sessions have no inactivity/absolute expiry; a 15-minute POS lock preserves pending work. App/service closure/restart, Windows restart, logout, or other termination abandons a pending cart; shared Windows lock terminates an active OWNER POS session, and unlock never authenticates an app user. |
+| `RecoveryCode` | Single-use owner recovery verifier with version and custody metadata; plaintext is shown only for off-terminal custody, and successful recovery atomically consumes and replaces it while revoking sessions. |
 | `Category` | Owner-managed product grouping with stable identity. Deletion is restricted when referenced; deactivation is preferred. |
 | `Product` | Name, unique SKU/code, optional unique barcode when present, category, final COP price, active state, and current stock projection. Historical sale lines never depend on later product edits. |
 
@@ -142,9 +156,12 @@ Transfer components and transfer reversals are excluded. At closure, this derive
 | `TicketSnapshot` | Exactly one immutable render model per confirmed sale containing store identity, sale number/time, cashier, lines, effective prices, payments, change, COP and locale metadata. It is created only after/with durable confirmation and is unaffected by later catalog edits. |
 | `PrintJob` | References a ticket snapshot and request type (`INITIAL` or `REPRINT`), requester, idempotency key, state, and timestamps. Initial job uniqueness is scoped to the sale; deliberate reprints are separately attributed requests. |
 | `PrintAttempt` | Append-only attempt number, provider, start/end, result (`SUCCEEDED`, `FAILED`, `UNKNOWN`), diagnostic code, and non-sensitive message. |
-| `BackupJob` | `SHIFT_CLOSE` trigger, related closed shift, configured destination snapshot, database commit/high-watermark, state, attempts, and observable outcome. The job is unique per closed shift. Owner export copies a completed artifact and does not masquerade as another closure backup. |
-| `BackupArtifact` | Immutable artifact identity, format/data versions, creation instant, scope manifest, record counts, integrity digest(s), destination, size, and completion state. |
-| `BackupVerification` | Owner, artifact digest, check-by-check metadata/integrity/isolated-restore results, time, and final `RESTORE_READY` or `REJECTED` result. A result applies only to the exact artifact digest. |
+| `BackupJob` | Durable `SHIFT_CLOSE` or owner-export unit of work with related closed shift, configured destination snapshot, database commit/high-watermark, state, and persistent alert status. It commits before external I/O and is unique per closed shift; retry appends attempts to the same job. |
+| `BackupAttempt` | One append-only execution of a backup job with start/end, destination, result including `UNKNOWN`, safe diagnostics, and produced artifact identity when successful. |
+| `BackupArtifact` | Immutable complete output with identity, format/data and encryption-key versions, creation instant, scope manifest, record counts, integrity digest(s), destination, size, custody state, and completion state. Complete does not imply restore-ready. |
+| `BackupVerification` | Owner, exact artifact digest, check-by-check metadata/integrity/decrypt/isolated-reconstruction results, time, and final `RESTORE_READY` or `REJECTED` result. A result applies only to the exact artifact digest. |
+| `CustodyAttestation` | Secret-free record of sealed-material creation, handoff, rotation, rehearsal, or retirement, naming a custodian who has no application authority. |
+| `RetentionTombstone` | Append-only identity, actor, reason, policy basis, time, and affected record/artifact/key identifiers for bounded disposal or guarded retirement. |
 | `AuditEvent` | Append-only actor, action, target type/id, instant, command/correlation ID, outcome, and safe before/after or reason metadata. It complements, not replaces, domain journals. |
 
 Audit coverage includes successful and denied privileged commands, authentication outcomes without credential contents, product changes, stock adjustments, cash movements, price overrides, discounts, confirmations, voids, shift open/close, backup configuration/export/verification/restore, and print/reprint requests. Secrets, credential hashes, and unnecessary payment-reference content must not be copied into diagnostic logs.
@@ -177,7 +194,10 @@ Audit coverage includes successful and denied privileged commands, authenticatio
 - Closed-shift financial records and reconciliation snapshots are immutable.
 - Command idempotency is enforced terminal-wide by `(command type, idempotency key)` plus unique domain source keys. The retained command record includes actor and payload digest; reuse with a different actor or payload is rejected, while an authorized retry after restart can retrieve the original outcome.
 - A print request can never create or alter sale, stock, payment, or shift effects.
-- A close-triggered backup job is created exactly once per successfully closed shift. Backup execution may fail and be retried without reopening or altering that shift.
+- A close-triggered backup job is created exactly once per successfully closed shift before external I/O. Backup execution may fail and append a retry attempt without reopening or altering that shift.
+- A new shift cannot open until the prior closed shift has a complete backup artifact.
+- Authoritative business and audit history is retained for the installation lifetime; retention cleanup never crosses protected artifact, `UNKNOWN`, incident, hold, or tombstone boundaries.
+- Live, backup, export, validation, staging, rollback, and recovery-journal data remains confidential at rest; unavailable cryptographic material fails closed.
 
 Database constraints provide the final guard; service checks provide actionable Colombian-Spanish messages. Concurrency is low but not assumed absent: commands use transactions, conditional revisions, row-level or equivalent write serialization, and uniqueness constraints rather than UI sequencing.
 
@@ -286,19 +306,21 @@ No generic print API can guarantee exactly-once physical paper output across a c
 
 - The local service, not the browser, validates credentials and permissions for every command.
 - Credentials are stored only as salted, adaptive password hashes with versioned parameters. Plaintext credentials are never retained or logged.
-- Sessions use unpredictable identifiers, inactivity and absolute expiry, secure local storage semantics, request-forgery protection, and explicit logout. Exact transport/packaging controls must match the selected local host model.
+- Sessions use unpredictable identifiers, secure local storage, request-forgery protection, and explicit logout. OWNER/CASHIER sessions have no inactivity/absolute expiry; the 15-minute POS lock preserves pending work. App/service closure/restart, Windows restart, logout, or other termination abandons a pending cart; shared Windows lock terminates an active OWNER POS session, and unlock never authenticates an app user.
 - The service binds to loopback unless a later approved scope change introduces networking. Database and backup paths are not directly served to the browser.
-- Owner-only: catalog/category management, stock adjustment, eligible void authorization, reports, backup configuration, export, verification, and restore.
-- Owner or cashier: authentication, shifts, carts, checkout, cash movements, initial printing, and reprinting.
-- A privileged action uses the identity authenticated when that action is submitted. Owner step-up for a void creates a short-lived authorization context attributable to the owner; it does not rewrite the sale cashier or prior cart actors.
+- Owner-only: account administration; catalog/category including positive opening stock; stock adjustment; void authorization; reports; viewing/mutating backup configuration/protection; projection-health inspection; recovery-code rotation; export/verify/restore/retire/dispose; repair/rebuild; orphan transfer; and custody attestations.
+- Owner or cashier: authentication/logout, catalog reading, shifts, carts/checkout/pricing/gifts, reasoned cash movements without fresh owner authorization, assisted-void request, printing/reprinting, and backup health/role-appropriate alerts. Exact idempotent replay may return an already-durable result after revocation without mutation.
+- The service denies unlisted commands. Creation, reset, and reactivation issue the same single-use no-time-expiry provisional password and block operations until change; the last active owner cannot be deactivated/demoted.
+- Fresh owner password authorization covers user creation/reactivation/display-name/profile edit, another-user role/credential/state change, and the resolved sensitive commands. Any OWNER or CASHIER changing their own password supplies their current password plus fresh OWNER authorization; this grants no independent password authority. Reasons include another-user credential reset plus existing reasoned boundaries. Snapshots preserve requester/authorizer.
+- An orphaned shift may be transferred only by a freshly authorized owner with a reason, preserving both the original responsible-user and accepting-owner attribution.
 - Authorization failure performs no domain mutation and emits a safe audit outcome.
 - Restore runs in exclusive maintenance mode after re-authentication and explicit owner confirmation. No sale, shift, print-job mutation, or report request may race with replacement.
 
-Initial owner provisioning, owner credential recovery, password policy values, session durations, and whether owners may manage other user accounts are not specified product capabilities. They require an explicit security decision before implementation tasks; no insecure default or shared account may be assumed.
+Owner provisioning, recovery, password/session policy, and user administration are resolved by decision map #5. A pristine install permits one atomic named-owner claim and no default, shared, platform, or support account. Passwords require at least eight characters with uppercase, lowercase, number, and symbol classes plus common-password rejection; repeated failures incur progressive delays without permanent lockout. Owners manage named accounts through provisional passwords, immutable never-reused login names, deactivation, immediate session revocation, and a last-owner safeguard. Sensitive mutations require the acting owner to re-enter the current password for that command only and include a reason where specified. Offline recovery requires the current single-use recovery code, revokes sessions, and rotates that code without a bypass.
 
 ### Local threat controls
 
-Use least-privilege Windows service and data-directory permissions; protect database, credential, backup configuration, and logs from ordinary user modification; sign/package executable components; validate all local API inputs; avoid command execution from printer or backup fields; normalize and constrain owner-selected paths; and never trust backup manifests before integrity and schema checks. Full-disk or backup encryption is a deployment/security decision, not silently assumed by this design.
+Use least-privilege permissions, signing, validated loopback inputs, constrained paths, and untrusted-manifest checks. Confidentiality covers every live/recovery copy. Deferred mechanisms MUST support unattended backup; rotation only on compromise, custody change, or owner decision; restore authority separate from custody; sealed material independent of terminal, medium/location, owner credential, and everyday custodian; external custodian as another OWNER or trusted non-user with attested responsibility but no authority/direction; redaction; and no backdoor.
 
 ## Offline startup and restart behavior
 
@@ -306,7 +328,7 @@ Use least-privilege Windows service and data-directory permissions; protect data
 2. The service acquires a single-instance lock, opens the database, validates supported schema/version and integrity prerequisites, and completes database-native crash recovery.
 3. It checks projection consistency markers and durable jobs. Safe pending jobs resume; ambiguous print attempts become `UNKNOWN` rather than being silently replayed.
 4. The UI waits for a local readiness endpoint and then permits local authentication. It displays an actionable Colombian-Spanish recovery screen if the service is unavailable, the schema is unsupported, or integrity checks fail.
-5. The active shift, completed sales, stock, movements, and jobs are read from durable state. Draft carts need not survive restart unless later specified; their loss cannot alter stock or financial records.
+5. Durable state restores the active shift, completed sales, stock, movements, and jobs. A 15-minute POS lock preserves a pending cart; session termination abandons it without altering stock or financial records.
 6. Internet state is informational only and never gates core commands.
 
 Startup must fail closed into diagnostic/recovery mode rather than initialize an empty database over an unreadable one. Service restart during a database transaction yields either its complete committed state or no state. Jobs use leases/claim timestamps so abandoned work can be recovered without repeating domain effects.
@@ -315,11 +337,15 @@ Startup must fail closed into diagnostic/recovery mode rather than initialize an
 
 ### Backup creation and export
 
-A backup is complete only after the worker obtains a transactionally consistent snapshot that includes at least the closure job's retained commit/high-watermark, writes a manifest and version metadata, computes integrity digests, writes to a temporary destination name, flushes as supported by the chosen storage mechanism, reopens and verifies the artifact, and then finalizes it atomically where the destination supports it. Partial files retain a non-complete marker and are never offered as restore-ready.
+The RPO is one shift/24 hours: open-shift age warns/alerts without forced close or sale interruption; next shift waits for the prior complete artifact; capacity is predicted. The four-hour RTO starts when a compatible terminal, installable app, and latest complete artifact are available; recovery-material retrieval/availability cannot delay the start and occurs inside the period with verification through return to operation. Destination return auto-retries the same job; owner retry is allowed. Lifecycle terms remain distinct.
+
+A backup is complete only after the unattended worker snapshots through the closure high-watermark, encrypts, manifests, digests, temporary-writes, flushes, reopens, verifies, and atomically finalizes on physically distinct removable storage. Partial output is never restore-ready. The medium is disconnected only after successful artifact completion, not after failed or `UNKNOWN` attempts.
 
 The manifest identifies at least users/roles needed for attribution and access recovery, categories/products, sales/lines, payments/reversals, stock ledger/projections, shifts/cash movements, voids, tickets/print history, audits, backup metadata/configuration required for recovery, schema/data version, record counts, creation instant, source application version, and the newly closed shift for a closure backup. Credential material requires explicit secure handling but cannot be omitted if omission would prevent a complete local recovery.
 
-Owner export copies an already completed artifact to an owner-selected destination using temporary-write, digest verification, and finalize semantics. It neither changes the source artifact nor live data.
+Owner export copies an already completed encrypted artifact to an owner-selected destination using temporary-write, digest verification, and finalize semantics. It neither changes the source artifact nor live data. Every temporary, export, validation, staging, rollback, and journal copy remains confidential at rest.
+
+Retention keeps lifetime business/audit history, durable jobs, authoritative job outcomes, and protected `UNKNOWN`/incident/hold records. Distinct repetitive attempt/verification detail may expire automatically after 90 days and diagnostics after 30, while preserving seven latest complete artifacts plus latest restore-ready. Eligible complete-artifact disposal requires fresh owner authorization/reason/tombstone. Guarded installation retirement requires irreversible named-owner confirmation, recent external restore-ready backup, recorded external custodian responsibility, and tombstone.
 
 ### Objective verification
 
@@ -350,7 +376,7 @@ flowchart TD
     K --> L[Resume service with recovered state]
 ```
 
-Safe replacement must use database-native restore/rename facilities or same-volume atomic filesystem switching appropriate to the selected database. Copying tables into the live database is prohibited. The rollback snapshot is preserved until post-swap startup and consistency checks pass. Power-loss recovery uses a small external recovery journal that identifies the old, staging, and selected datasets and allows startup to finish or roll back the swap deterministically. Backup artifacts are never executed as code and are opened only in constrained staging.
+Safe replacement uses database-native restore/rename or same-volume atomic switching; table-copy restore is prohibited. Encrypted rollback snapshots and external recovery journals remain until restored-state verification succeeds AND a new restore-ready backup exists. Failed encrypted staging is removed within seven days unless held. The journal identifies old/staging/selected datasets for deterministic finish/rollback. Artifacts are never executed and open only in constrained staging.
 
 ## Reporting and reconciliation
 
@@ -442,7 +468,7 @@ Each tested candidate receives a recorded pass/fail result and operational notes
 | Backup destination missing/full | Closed shift and live data remain; record failure/time/destination and permit owner recovery. |
 | Backup interrupted | Temporary/incomplete artifact is never reported complete or restore-ready. |
 | Backup corrupt/unsupported | Verification identifies failed checks; restore is denied without live mutation. |
-| Restore staging fails | Discard/quarantine staging and resume unchanged live dataset. |
+| Restore staging fails | Resume unchanged live data; retain encrypted failed staging no more than seven days unless explicitly held, then retire it safely. |
 | Swap/startup after restore fails | Recovery journal directs rollback to pre-restore snapshot; no mixed dataset is exposed. |
 | Database integrity/schema unsupported at startup | Enter recovery mode; do not create empty replacement or permit sales. |
 | Projection mismatch | Report discrepancy; rebuild only through controlled audited maintenance after backup. |
@@ -483,7 +509,7 @@ When printing is pursued, run the POC checklist on the actual Windows terminal a
 
 ## Rollout and operations
 
-1. Resolve security bootstrap and local packaging decisions.
+1. Carry the resolved decision-map #5 security, quantity, retention, and recovery policies into implementation planning; select only the still-deferred mechanisms and local packaging.
 2. Decide whether printing is included now or explicitly deferred; neither the printing work nor its POC may block the remaining rollout.
 3. Implement against migration/version and provider contracts only after task authorization.
 4. On a non-production dataset, rehearse install, offline startup, active-shift restart, backup failure, verification, and restore rollback; rehearse printer recovery only when printing is available.
@@ -496,11 +522,11 @@ When printing is pursued, run the POC checklist on the actual Windows terminal a
 
 | Specification | Design decisions and verification points |
 | --- | --- |
-| `access-control` | Local identity/session model; service-side role matrix; current-identity attribution; owner step-up; denied-command no-mutation and audit tests. |
+| `access-control` | Decision map #5 with #6–#7; one-time claim/recovery; named account lifecycle; service-side command matrix; session revocation; one-command fresh authorization; dual attribution; denied-command no-mutation and audit tests. |
 | `cash-shifts` | Database-enforced single open shift; cash-effect formula; transactional movements/closure; immutable close snapshot; unique automatic backup job and failure visibility. |
-| `catalog-inventory` | Owner catalog boundary; active product checks; stock journal plus current projection; transaction locks/constraints; non-negative and exactly-once tests. |
+| `catalog-inventory` | Decision map #5 with #8; whole-unit validation; zero/nonzero `OPENING` entries; gift lines; stock journal plus current projection; migration boundary; non-negative and exactly-once tests. |
 | `colombia-regional-behavior` | Integer COP, final prices/no tax model, centralized Colombian-Spanish UI, absolute instants rendered in `America/Bogota`, day-first dates. |
-| `offline-data-recovery` | Local service/database, restart flow, durable jobs, closure backup, owner export, objective verification, isolated staging, atomic safe replacement, migration support. |
+| `offline-data-recovery` | Decision map #5 with #9–#11; RPO/RTO and next-shift gate; physically distinct removable storage; job/attempt/artifact lifecycle; retention and disposal; confidentiality/custody/rotation; exact-artifact rehearsal; isolated staging and atomic safe replacement. |
 | `reports-reconciliation` | Authoritative source records, deterministic formulas, owner-only views, void-preserving history, rebuildable projections, immutable closed-shift comparisons. |
 | `sales-checkout` | Editable UI-only cart state; immutable confirmed snapshots; settlement rules; atomic confirmation; exact, unique owner void reversals; no returns/exchanges. |
 | `tickets-printing` | Ticket snapshot content; post-commit jobs/attempts; idempotent requests and explicit reprints; `UNKNOWN` handoff recovery; non-blocking deferral and honest actual-hardware evidence. |
@@ -514,15 +540,15 @@ When printing is pursued, run the POC checklist on the actual Windows terminal a
 | Print provider/bridge | A working or supported printing claim | Retained actual-hardware POC evidence; absent evidence requires an unavailable or unverified status, not an MVP delay. |
 | Backup archive/container and digest algorithms | Backup implementation | Integrity, portability, versionability, safe streaming, Windows filesystem behavior. |
 | Backup scheduling beyond mandatory close trigger and owner export | Future scope decision | Operational need; must not weaken close-trigger behavior. |
-| Credential bootstrap/recovery and user administration | Access-control implementation | Named accountability, offline recovery, secure owner control. |
-| Data-at-rest/backup encryption and key recovery | Deployment security decision | Threat model, recoverability, Windows facilities, owner operations. |
-| Quantity precision policy | Catalog implementation | Actual merchandise units; must remain exact and preserve non-negative stock. |
-| Retention policy for backups, logs, jobs, and attempts | Operational policy | Recovery objectives, storage limits, audit needs; no silent deletion of business history. |
+| Credential hashing, recovery-code sealing, and custody mechanisms | Access-control implementation | Must realize #6–#7 without changing the one-time claim, no-bypass recovery, named-account, revocation, or fresh-authorization policies. |
+| At-rest encryption, archive, and key-store mechanisms | Recovery implementation | Must realize #10–#11 across every live and recovery copy, unattended jobs, separated custody, retention-aware rotation, exact-artifact restore, and permanent-loss behavior. |
+| Whole-unit storage representation and parser | Catalog implementation | Must realize #8 exactly and reserve a versioned history-preserving migration path for future fractional units. |
+| Retention scheduler, secure-disposal primitive, and storage-health integration | Recovery implementation | Must realize #9–#10 without weakening lifetime history, age floors, protected exceptions, artifact minima, alerts, tombstones, or guarded retirement. |
 
 ## Known risks
 
 - Silent USB printing remains an unresolved capability, but it is not release-critical and must not block MVP implementation, acceptance, or delivery; absent accepted hardware evidence, report it as unavailable or unverified.
-- A single terminal and local dataset are a hardware-loss concentration risk; a backup on the same physical disk is operationally weak even if technically valid.
+- A single terminal and local dataset remain a hardware-loss concentration risk; a same-disk backup is invalid, and the required physically distinct removable copy still depends on disciplined disconnection and custody.
 - Exact physical once-only printing is impossible across an ambiguous device handoff; visible `UNKNOWN` state and deliberate reprint are required.
 - Restore and migration are high-risk owner operations; exclusive maintenance, staging, rollback snapshots, and rehearsals are mandatory.
 - Host compromise or loss can expose local business data unless deployment permissions and any chosen encryption controls are correctly operated.
