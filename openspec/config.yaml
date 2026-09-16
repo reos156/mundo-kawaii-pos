@@ -21,7 +21,7 @@ rules:
   tasks:
     protect_review_workload: true
   apply:
-    implementation_authorized: false
+    implementation_authorized: true
   verify:
     implementation_authorized: false
   archive:
