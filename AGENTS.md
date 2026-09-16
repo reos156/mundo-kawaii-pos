@@ -2,7 +2,7 @@
 
 ## Project workflows
 
-- This project opts into the global `run-sdd-work-unit` skill via `.pi/run-sdd-work-unit.json`, only when explicitly invoked as `/skill:run-sdd-work-unit WU-XX`.
+- This project opts into the global prepare-only `prepare-sdd-work-unit` skill via `.pi/prepare-sdd-work-unit.json`, only when explicitly invoked as `/skill:prepare-sdd-work-unit WU-XX`.
 
 ## Agent skills
 ### Issue tracker
