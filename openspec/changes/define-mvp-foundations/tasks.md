@@ -1,6 +1,6 @@
 # Implementation Tasks: Offline-first MVP foundations
 
-> Planning only. This plan does not authorize implementation, apply progress, verification, synchronization, archiving, commits, or deployment.
+> Implementation and apply progress are authorized one bounded work unit at a time under the work-unit protocol below. This plan does not authorize commits, pushes, pull requests, synchronization, archiving, or deployment.
 
 ## Review Workload Forecast
 
@@ -10,12 +10,12 @@
 | 400-line budget risk | High |
 | Chained PRs recommended | Yes |
 | Suggested split | Decision/POC evidence → foundation → one independently verifiable vertical work unit per PR; split UI from service only when each sub-PR remains runnable |
-| Delivery strategy | ask-on-risk |
-| Chain strategy | pending |
+| Delivery strategy | ask-on-risk (split approved) |
+| Chain strategy | stacked-to-main |
 
-Decision needed before apply: Yes
+Decision needed before apply: No
 Chained PRs recommended: Yes
-Chain strategy: pending
+Chain strategy: stacked-to-main
 400-line budget risk: High
 
 The MVP is a new offline application with multiple transactional workflows, hardware integration, recovery tooling, migrations, security controls, tests, and Windows packaging. Before apply, obtain the requested delivery decision; then keep each accepted PR at or below 400 authored changed lines where an honest vertical split exists. If a cohesive unit cannot fit after one slicing pass, report its smallest honest size and request a size exception rather than compressing tests or documentation.
