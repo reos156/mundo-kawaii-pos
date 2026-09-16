@@ -1,9 +1,8 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "enabled": true,
   "worktree_parent": "..",
   "integration_branch": "main",
   "branch_prefix": "feat/",
-  "issue_provider": "github",
-  "agent_kind": "pi"
+  "issue_provider": "github"
 }
