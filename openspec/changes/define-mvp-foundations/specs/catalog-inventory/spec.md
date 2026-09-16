@@ -8,7 +8,7 @@ Define owner-managed products, strict non-negative stock, and traceable stock ad
 
 ### Requirement: Product catalog management
 
-The system MUST allow an authenticated owner to create and edit products with a name, SKU or code, optional barcode, final selling price, stock balance, category, and active status. The system MUST deny catalog management to cashiers.
+The system MUST allow an authenticated owner to create and edit products with a name, SKU or code, optional barcode, final selling price, non-negative whole-unit opening quantity, category, and active status. Product creation MUST append an `OPENING` stock-ledger entry even when the opening quantity is zero. The system MUST deny catalog management to cashiers.
 
 #### Scenario: Owner creates an active product
 
@@ -79,3 +79,49 @@ The system MUST allow only an authenticated owner to increase or decrease stock 
 - WHEN the cashier attempts to adjust stock
 - THEN the system MUST deny the action
 - AND MUST leave stock and adjustment history unchanged
+
+### Requirement: Whole-unit quantity policy
+
+Opening quantities MUST be non-negative whole units. Sale quantities and stock-adjustment magnitudes MUST be positive whole units in increments of one. The service MUST accept exactly integral numeric forms such as `2` and `2.0`, MUST reject fractional values such as `2.5`, and MUST NOT round or truncate input. Every stock change MUST be an append-only ledger effect; no command MAY directly overwrite the current stock projection.
+
+#### Scenario: Create zero opening stock
+
+- GIVEN an authenticated owner creates a valid product with opening quantity `0`
+- WHEN product creation commits
+- THEN the system MUST retain a zero-balance `OPENING` ledger entry
+- AND the current stock projection MUST equal zero
+
+#### Scenario: Accept an exactly integral form
+
+- GIVEN a quantity input of `2.0`
+- WHEN the service validates it for an opening quantity, sale line, or stock adjustment
+- THEN the system MUST interpret it as exactly two whole units
+- AND MUST retain an integral quantity without floating-point residue
+
+#### Scenario: Reject a fractional quantity
+
+- GIVEN a quantity input of `2.5`
+- WHEN a user attempts product creation, sale confirmation, or stock adjustment
+- THEN the system MUST reject the command
+- AND MUST NOT round, truncate, or mutate stock or ledger history
+
+#### Scenario: Reject non-positive sale or adjustment quantity
+
+- GIVEN a sale line or stock adjustment has quantity `0` or a negative quantity
+- WHEN the command is submitted
+- THEN the system MUST reject the command without changing stock
+
+### Requirement: Gift sale lines
+
+A gift MUST be represented as a normal sale line with a positive whole-unit quantity and an effective unit price of zero. Gift stock MUST be reduced through the same confirmation transaction and stock ledger as any other sale; a zero quantity MUST NOT represent a gift.
+
+#### Scenario: Confirm a gift line
+
+- GIVEN an active product has sufficient stock and a sale line is explicitly marked as a gift
+- WHEN a positive whole-unit quantity is confirmed at zero effective unit price
+- THEN the system MUST reduce stock by that quantity exactly once
+- AND MUST retain the catalog price, zero effective price, gift designation, and actor attribution
+
+### Requirement: Future quantity-precision migration
+
+The MVP quantity scale MUST remain whole units. Supporting fractional units later MUST require an explicit versioned migration that preserves the exact meaning and audit history of every prior opening, sale, void, and adjustment quantity; changing parser or display behavior alone MUST NOT reinterpret retained history.

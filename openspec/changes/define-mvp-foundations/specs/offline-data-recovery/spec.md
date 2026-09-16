@@ -43,14 +43,15 @@ The system MUST persist confirmed sales, sale lines, payment details, stock chan
 
 ### Requirement: Observable automatic backup at shift closure
 
-The system MUST automatically create a backup whenever a shift closes and MUST write it to the backup location configured by the owner. The backup MUST contain the business data and relationships needed to recover sales, payment components, stock, audits, cash movements, and active or closed shift state, including the newly closed shift. The system MUST expose the backup result, completion time, and configured destination to the owner without requiring manual backup initiation.
+A successful shift closure MUST atomically commit the closed-shift state and create exactly one durable backup job before any external I/O. An unattended worker MUST attempt that job against owner-configured removable storage physically distinct from the live-data disk; the medium MUST be disconnected only after successful completion of a backup artifact, not after a failed or `UNKNOWN` attempt. The complete artifact MUST contain the business data and relationships needed to recover sales, payments, stock, audits, cash movements, and shift state including the new closure. The system MUST expose persistent role-appropriate job/attempt status, time, and destination without manual initiation.
 
 #### Scenario: Shift closure creates an observable backup
 
 - GIVEN an active shift, retained operational records, and an available owner-configured backup location
 - WHEN the shift closes successfully
-- THEN the system MUST automatically write one completed backup containing the closed shift state to that configured location
-- AND MUST make the successful result, completion time, and destination observable to the owner
+- THEN the closure transaction MUST create one durable backup job containing the closed shift high-watermark
+- AND the unattended worker MUST create and verify one complete artifact at the configured location
+- AND the system MUST make the job, attempts, artifact result, completion time, and destination observable to the owner
 
 #### Scenario: Rejected closure does not trigger a backup
 
@@ -64,7 +65,8 @@ The system MUST automatically create a backup whenever a shift closes and MUST w
 - GIVEN a shift closes but its automatic backup cannot be completed at the owner-configured location
 - WHEN the backup result is reported
 - THEN the system MUST preserve the live operational data and closed shift state unchanged
-- AND MUST make the failure, attempted time, and configured destination observable to the owner for recovery action
+- AND MUST automatically append a non-destructive retry to the same durable job when the destination returns, while also allowing an owner-requested retry on that job
+- AND MUST persist a role-appropriate alert with the failed attempt time and destination until resolved
 
 ### Requirement: Owner backup location and export
 
@@ -161,3 +163,102 @@ Only an authenticated owner MUST be allowed to restore a backup, and the system 
 - WHEN the complete dataset cannot be restored
 - THEN the system MUST report the failure
 - AND MUST NOT expose a partially restored mixture of old and backup data as operational state
+
+### Requirement: Recovery objectives and shift gate
+
+The system MUST protect closure state to an RPO of at most one shift or 24 hours, whichever is stricter. When the currently open shift approaches 24 hours of age the system MUST warn, and when it exceeds 24 hours MUST raise a critical alert, without forcing closure or interrupting an open shift or sale; the next shift remains blocked until the prior closure has a complete artifact. The four-operating-hour RTO MUST start once a compatible terminal, installable application, and latest complete artifact are available; retrieving and making recovery material available MUST occur inside that period and MUST NOT postpone its start, which also includes artifact verification, restoration, restored-state verification, and return to operation. Before closure, the system MUST warn when destination capacity is predicted insufficient for the next backup.
+
+#### Scenario: Prior closure lacks a complete artifact
+
+- GIVEN the most recently closed shift's backup job has no complete artifact
+- WHEN an owner or cashier attempts to open the next shift
+- THEN the service MUST reject shift opening
+- AND MUST show the persistent backup alert and owner recovery action
+
+#### Scenario: Retry the same closure job
+
+- GIVEN a closure backup attempt failed after the shift and job committed
+- WHEN the destination becomes available again or an owner requests retry
+- THEN the worker MUST automatically append, or allow the owner to append, a new attempt to the same job
+- AND MUST leave the closed shift and prior attempt history unchanged
+
+### Requirement: Precise recovery terminology
+
+A backup job MUST mean the durable unit of work created by shift closure or explicit owner export; an attempt MUST mean one execution of that job; a complete artifact MUST mean an immutable finalized output that passed write, flush, reopen, and integrity checks; and restore-ready MUST mean that the exact complete artifact digest later passed every objective verification and isolated reconstruction check. The UI, audits, and operations documentation MUST NOT use these terms interchangeably.
+
+### Requirement: Lifetime history and bounded detail retention
+
+Authoritative business records, durable jobs, each job's authoritative outcome, and audit history MUST remain for the installation lifetime, distinct from repetitive attempt/verification detail. Scheduled retention MAY automatically expire that unprotected repetitive detail after 90 days and non-authoritative diagnostics after 30 days without owner authorization only when they are not `UNKNOWN`, incident-linked, or held. It MUST preserve the seven latest complete artifacts and latest restore-ready artifact even when overlapping; eligible complete-artifact disposal remains guarded and owner-authorized.
+
+#### Scenario: Retention runs under normal storage conditions
+
+- GIVEN retained detail and artifacts exceed their minimum age or count
+- WHEN retention evaluation runs
+- THEN it MUST automatically expire only unprotected attempt/verification detail older than 90 days and diagnostics older than 30 days
+- AND MUST preserve lifetime history, `UNKNOWN`/incident/held records, artifact minima, and material requiring guarded owner disposal
+
+#### Scenario: Storage pressure becomes critical
+
+- GIVEN available protected storage falls below 20 percent
+- WHEN health is evaluated
+- THEN the system MUST issue a persistent warning
+- AND when availability falls below 10 percent or a required backup fails, it MUST issue a persistent critical alert
+- AND it MUST NOT silently delete authoritative history, protected artifacts, holds, incidents, or `UNKNOWN` records
+
+### Requirement: Owner-controlled disposal and guarded retirement
+
+Only a freshly authorized owner MAY dispose of an eligible complete backup artifact or irreversibly retire the installation, with a reason, policy evaluation, custody confirmation, and secret-free tombstone. Installation retirement MUST require named-owner irreversible confirmation, a recent external restore-ready backup, and a recorded external custodian responsibility attestation. Artifact/key retirement MUST be refused while retained material depends on it.
+
+#### Scenario: Retire an installation
+
+- GIVEN a recent external restore-ready backup and recorded external custodian are available
+- WHEN a named owner provides a reason, fresh password, and irreversible confirmation
+- THEN the system MAY execute guarded installation retirement
+- AND MUST retain its custody attestation and tombstone
+
+### Requirement: Confidential live data and recovery copies
+
+Live data, temporary backup output, complete artifacts, exported copies, validation copies, rollback snapshots, staging datasets, and recovery-journal material MUST be confidential at rest. Backup execution MUST remain automatic and unattended after its durable job is created. Encryption and decryption failure MUST fail closed, emit safe audits, and redact passwords, recovery codes, keys, decrypted content, and unnecessary payment details from logs and diagnostics.
+
+#### Scenario: Protected storage cannot encrypt an artifact
+
+- GIVEN a backup job is ready to write but approved encryption material is unavailable or invalid
+- WHEN the worker attempts the backup
+- THEN the attempt MUST fail without creating a complete plaintext artifact
+- AND the system MUST persist a redacted failure and critical alert
+
+### Requirement: Separated restore authority and sealed-material custody
+
+A named owner MUST authorize/direct restore separately from sealed-material custody. The offline sealed copy MUST be separate from terminal, backup medium/location, owner credential, and everyday custodian material. Its named external custodian MAY be another `OWNER` or a trusted non-user and is responsible for physical security, availability, and controlled handoff with secret-free attestations; custody grants no application authority, and the custodian MAY supply material but MUST NOT authorize/direct restore. Loss of all usable copies is permanent without bypass.
+
+#### Scenario: Restore requires separate material
+
+- GIVEN a named owner selects an exact restore-ready artifact
+- WHEN the required sealed material is not supplied through the approved custody procedure
+- THEN the system MUST refuse decryption and restore without mutating live data
+
+### Requirement: Versioned retention-aware key rotation
+
+Encryption material MUST be versioned and rotated only on suspected compromise, custody change, or explicit owner decision. Rotation MUST preserve decryption of every retained artifact until each dependency is lawfully disposed or re-encrypted and verified, retain an independent offline sealed version, update custody responsibility attestations, and never silently invalidate restore-ready evidence.
+
+### Requirement: Exact-artifact recovery and rehearsal
+
+Restore and recovery rehearsals MUST decrypt, verify, and reconstruct the exact selected artifact in isolated staging before the first production shift and after material rotation, custodian change, terminal replacement, or protection-boundary change. No other mandatory trigger or cadence applies. A successful rehearsal MUST demonstrate verification, restoration, restored-state verification, and return to operation within four operating hours without mutating live data.
+
+#### Scenario: Rehearse a selected artifact
+
+- GIVEN a complete artifact, its exact digest, and authorized recovery material
+- WHEN a rehearsal is performed
+- THEN the system MUST decrypt, verify, migrate if supported, and reconstruct that exact artifact in isolation
+- AND MUST retain the measured result and custody attestations without exposing secrets
+
+### Requirement: Controlled recovery-material lifecycle
+
+Restore MUST use an external journal, isolated staging, and a pre-restore rollback snapshot. Rollback snapshots and external recovery journals MUST remain encrypted until restored-state verification succeeds AND a new restore-ready backup exists, then follow guarded auditable retirement. Failed staging data MUST be encrypted and removed within seven days unless an explicit incident or legal hold applies. Interruption MUST deterministically resume or roll back, and cleanup MUST never remove the only viable recovery path.
+
+#### Scenario: Restore is interrupted
+
+- GIVEN the recovery journal identifies live, staging, and rollback datasets
+- WHEN power or process failure interrupts replacement
+- THEN startup MUST use the journal to finish or roll back deterministically
+- AND MUST fail closed rather than expose mixed or unverifiable data
