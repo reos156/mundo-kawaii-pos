@@ -7,6 +7,7 @@
 ## Agent skills
 ### Issue tracker
 Issues and Wayfinder decision maps live in GitHub Issues. See `docs/agents/issue-tracker.md`.
+Write every GitHub artifact created for this project—including issues, decision tickets, pull requests, and review-facing descriptions—in Spanish.
 ### Triage labels
 Use the five default Matt Pocock triage labels. See `docs/agents/triage-labels.md`.
 ### Domain docs
