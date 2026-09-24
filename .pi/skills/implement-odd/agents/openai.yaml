@@ -1,0 +1,5 @@
+interface:
+  display_name: "Implement ODD"
+  short_description: "Implement one ready GitHub ticket with ODD"
+policy:
+  allow_implicit_invocation: false
