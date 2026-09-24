@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="es-CO">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Prototipo desechable · Cobro y finalización</title>
+<style>
+*{box-sizing:border-box}body{font:16px system-ui,sans-serif;max-width:1150px;margin:auto;padding:24px;background:#f4f6f8;color:#192c38}h1{font-size:1.8rem}h2{font-size:1.25rem}section{background:white;border:1px solid #d4dfe4;border-radius:10px;padding:20px;margin:18px 0}button,input,select{font:inherit;padding:9px;border:1px solid #a8bcc6;border-radius:5px}button{background:#eff7f7;color:#164c50;cursor:pointer;margin:4px}button:hover{background:#d9eeee}button:disabled{opacity:.45;cursor:default}button[aria-selected=true]{background:#17666b;color:white}label{display:inline-flex;flex-direction:column;gap:4px;margin:6px}input{max-width:210px}dl{display:grid;grid-template-columns:minmax(160px,1fr) 2fr;gap:9px}dt{font-weight:600}dd{margin:0;overflow-wrap:anywhere}.notice{border-left:5px solid #17666b;padding:12px;background:#e9f5f4}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.badge{font-weight:bold;color:#965700}li{margin:8px 0}small{color:#4c6570}#feedback{white-space:pre-line} @media(max-width:750px){.grid{grid-template-columns:1fr}body{padding:12px}}
+</style>
+<header><p class="badge">PROTOTIPO DESECHABLE · Sin conexión con dinero ni inventario real</p><h1>Cobrar y finalizar una venta</h1><p><strong>Pregunta:</strong> ¿La interacción concreta de caja, desde preparar la venta hasta finalizarla explícitamente, se siente correcta y conserva las reglas de negocio acordadas?</p><p>Abra este archivo con doble clic. Todo vive en memoria: al recargar se pierde. Los importes de ejemplo son pesos colombianos.</p></header>
+<section aria-live="polite"><h2>Qué acaba de pasar</h2><div id="feedback" class="notice"></div></section>
+<div class="grid"><section><h2>Venta seleccionada</h2><div id="state"></div></section><section><h2>Precuentas, reservas y turno</h2><div id="accounts"></div><h3>Comprobante comercial</h3><div id="receipt"></div></section></div>
+<section><h2>Exploración libre · siempre disponible</h2><p>Los botones permiten intentar incluso acciones no válidas: verá el motivo del rechazo. La autorización es una simulación, no un control de acceso real.</p><div id="selector"></div><div><label>Producto<input id="product" value="Cuaderno"></label><label>Cantidad<input id="qty" type="number" min="1" step="1" value="1"></label><label>Precio unitario (COP)<input id="price" type="number" min="0" step="1" value="10000"></label><label>Importe recibido / devuelto (COP)<input id="amount" type="number" min="1" step="1" value="15000"></label><label>Motivo obligatorio: corrección de efectivo o cancelación con dinero<input id="reason" placeholder="Explique lo ocurrido"></label><label><span>Autorización administrativa</span><select id="admin"><option value="no">No autorizada</option><option value="yes">Autorizada (simulación)</option></select></label></div><div id="controls"></div></section>
+<section><h2>Recorridos guiados</h2><p>Elegir una pestaña reinicia toda la demostración. Pulse los pasos en orden. Si usa la exploración libre durante un recorrido, reinicie la pestaña para repetirlo sin cambios.</p><div id="tabs" role="tablist" aria-label="Escenarios"></div><div id="guide" role="tabpanel"></div></section>
+<section><h2>Historial de acciones y devoluciones</h2><ol id="history"></ol></section>
+<section><h2>Supuestos para validar con usted</h2><ul><li>La demostración usa una línea de producto por venta y pesos enteros. No decide reglas de descuentos, impuestos ni existencias.</li><li>Guardar una precuenta reserva su cantidad; editarla actualiza esa reserva. Cancelar libera la reserva y finalizar la convierte en entrega habilitada. Confirme si esta representación le resulta clara.</li><li>Una corrección de efectivo expresa el nuevo acumulado registrado, no una devolución física. Una devolución tiene su propia acción y trazabilidad.</li><li>El excedente de transferencia se resuelve aquí registrando un reembolso administrativo antes de finalizar. El orden exacto de ese trámite necesita validación.</li><li>Una transferencia tardía queda vinculada a la venta cancelada y pendiente de devolución; nunca la reactiva.</li><li>La entrega de mercancía y los intentos manuales de compartir el comprobante se representan con botones; no hay impresión, envío, verificación bancaria ni autenticación reales.</li></ul></section>
+<script>
+// Disposable pure state machine. No DOM, persistence, clock, or external services.
+const Model = (() => {
+  const sale = id => ({id,status:'En preparación',product:'Cuaderno',qty:1,price:10000,saved:false,waiting:false,proof:false,cash:0,transfer:0,everReceived:false,changeGiven:0,refundDue:0,refunds:[],freeAuthorized:false,receipt:null,delivered:false,attempts:[]});
+  const initial = () => ({sales:[sale(1)],selected:1,log:[],message:'Venta de ejemplo preparada: un cuaderno de $10.000.',closed:false});
+  const figures = s => {const total=s.qty*s.price,paid=s.cash+s.transfer;return {total,paid,balance:Math.max(0,total-(paid-s.changeGiven)),change:Math.max(0,s.cash-Math.max(0,total-s.transfer)),transferExcess:Math.max(0,s.transfer-total)};};
+  function reduce(previous,a){
+    const n=JSON.parse(JSON.stringify(previous));let s=n.sales.find(x=>x.id===n.selected);let f=figures(s);
+    const reject=why=>{const out=JSON.parse(JSON.stringify(previous));out.message='Acción rechazada: '+why;out.log.push(a.label+' — '+out.message);return out;};
+    const positive=v=>Number.isSafeInteger(v)&&v>0;
+    let note='';
+    if(a.type==='select'){if(!n.sales.some(x=>x.id===a.id))return reject('La venta no existe.');n.selected=a.id;note='Se seleccionó la venta '+a.id+'.';}
+    else if(a.type==='close'){if(n.sales.some(x=>x.refundDue>0||(x.status==='En preparación'&&figures(x).transferExcess>0)))return reject('Hay devoluciones pendientes. El turno no puede cerrarse.');n.closed=true;note='Comprobación de cierre aprobada: no hay devoluciones pendientes. No se simulan otras reglas del turno.';}
+    else if(a.type==='new'){s=sale(n.sales.length+1);n.sales.push(s);n.selected=s.id;note='Nueva venta independiente; las demás precuentas y reservas se conservan.';}
+    else if(a.type==='share'){
+      if(!s.receipt)return reject('Solo una venta finalizada tiene comprobante comercial pagado.');
+      s.attempts.push(a.outcome);note='Intento manual registrado: '+a.outcome+'. El comprobante no cambia.';
+    }else if(a.type==='deliver'){
+      if(s.status!=='Finalizada')return reject('No se puede entregar mercancía antes de finalizar explícitamente.');
+      if(s.delivered)return reject('La entrega ya está registrada.');s.delivered=true;note='Entrega de mercancía registrada después de finalizar.';
+    }else if(a.type==='refund'){
+      if(!a.admin)return reject('Registrar la devolución requiere autorización administrativa.');
+      if(!positive(a.amount)||a.amount>s.refundDue)return reject('Indique un importe positivo que no supere la devolución pendiente.');
+      s.refundDue-=a.amount;s.refunds.push({amount:a.amount,reason:'Devolución de venta cancelada',authorized:true});note='Devolución realizada y trazada; pendiente: '+s.refundDue+' COP.';
+    }else if(a.type==='late'){
+      if(s.status!=='Cancelada')return reject('Este botón representa un depósito verificado después de cancelar.');
+      if(!positive(a.amount))return reject('El depósito debe ser positivo.');s.transfer+=a.amount;s.everReceived=true;s.refundDue+=a.amount;note='Depósito tardío verificado: la venta sigue cancelada y aumenta la devolución pendiente.';
+    }else {
+      if(s.status==='Finalizada'||s.status==='Cancelada')return reject('La venta está '+s.status.toLowerCase()+'. No se puede modificar ni reactivar.');
+      switch(a.type){
+        case 'edit':
+          if(s.everReceived)return reject('Ya se recibió dinero. No se pueden cambiar productos, cantidades ni precios; resuelva el pago o cancele.');
+          if(!a.product.trim()||!positive(a.qty)||!Number.isSafeInteger(a.price)||a.price<0||!Number.isSafeInteger(a.qty*a.price))return reject('Indique producto, cantidad entera positiva y precio válido no negativo.');
+          s.product=a.product.trim();s.qty=a.qty;s.price=a.price;s.freeAuthorized=false;note='Venta editada; '+(s.saved?'reserva actualizada.':'todavía no está reservada.');break;
+        case 'save':s.saved=true;note='Precuenta guardada: productos reservados, sin entrega.';break;
+        case 'wait':s.waiting=true;note='Esperando transferencia. No se ha registrado dinero por esta espera.';break;
+        case 'proof':s.proof=true;note='Soporte del cliente visto. No acredita depósito ni registra pago.';break;
+        case 'cash':case 'transfer':
+          if(!positive(a.amount))return reject('El pago debe ser positivo; no se permiten pagos ficticios de cero.');
+          if(f.total===0)return reject('Una venta gratuita no necesita pagos: requiere autorización administrativa.');
+          if(a.type==='cash'){s.cash+=a.amount;note='Efectivo recibido físicamente y registrado.';}else{s.transfer+=a.amount;s.waiting=false;note='Depósito verificado y transferencia registrada; el soporte por sí solo no basta.';}
+          s.everReceived=true;break;
+        case 'correct':
+          if(s.cash<=0)return reject('No hay efectivo registrado para corregir. Registre primero el efectivo recibido físicamente.');
+          if(!a.reason.trim())return reject('La corrección de efectivo requiere un motivo.');
+          if(!Number.isSafeInteger(a.amount)||a.amount<0)return reject('El acumulado corregido debe ser un entero no negativo.');
+          if(a.amount<s.changeGiven)return reject('El acumulado no puede borrar efectivo ya entregado como cambio; conserve ese movimiento y resuelva la diferencia.');
+          note='Corrección de efectivo: '+s.cash+' → '+a.amount+' COP. Motivo: '+a.reason.trim()+'. Responsable: cajero de demostración (simulado). No representa una devolución.';s.cash=a.amount;if(a.amount>0)s.everReceived=true;break;
+        case 'undo':
+          if(!a.admin)return reject('Deshacer una transferencia verificada requiere autorización administrativa.');
+          if(!positive(a.amount)||a.amount>s.transfer)return reject('El importe debe corresponder a una transferencia registrada.');
+          s.transfer-=a.amount;note='Transferencia deshecha con autorización: '+a.amount+' COP. Se conserva el movimiento en el historial; no simula una devolución bancaria.';break;
+        case 'change':
+          if(f.balance>0||f.transferExcess>0)return reject('Primero cubra el total y resuelva cualquier excedente de transferencia.');
+          if(f.change===0||s.changeGiven>=f.change)return reject('No hay cambio pendiente de entrega.');
+          note='Cajero confirmó cambio entregado: '+(f.change-s.changeGiven)+' COP.';s.changeGiven=f.change;break;
+        case 'reimburse':
+          if(!a.admin)return reject('El excedente de transferencia requiere reembolso administrativo, no cambio en efectivo.');
+          if(f.transferExcess===0)return reject('No hay excedente de transferencia.');
+          s.transfer-=f.transferExcess;s.refunds.push({amount:f.transferExcess,reason:'Reembolso administrativo de excedente de transferencia',authorized:true});note='Reembolso administrativo realizado y registrado: '+f.transferExcess+' COP.';break;
+        case 'free':if(!a.admin)return reject('La venta totalmente gratuita requiere autorización administrativa.');if(f.total!==0)return reject('Esta autorización corresponde únicamente a una venta de total cero.');s.freeAuthorized=true;note='Venta gratuita autorizada; no se crea un pago de cero.';break;
+        case 'cancel':
+          if(s.everReceived&&!a.admin)return reject('La venta recibió dinero: cancelar requiere autorización administrativa.');
+          if(s.everReceived&&!(a.reason||'').trim())return reject('La venta recibió dinero: cancelar requiere un motivo obligatorio.');
+          s.status='Cancelada';s.saved=false;s.refundDue=s.cash+s.transfer-s.changeGiven;note='Venta cancelada; reserva liberada. '+(s.everReceived?'Motivo: '+a.reason.trim()+'. Responsable: cajero de demostración (simulado); autorización: administrador de demostración (simulado). ':'')+(s.refundDue?'Registre la devolución de '+s.refundDue+' COP; bloquea el cierre de turno.':'Sin dinero pendiente de devolver.');break;
+        case 'finalize':
+          if(f.total===0&&!s.freeAuthorized)return reject('Falta autorización administrativa para la venta gratuita.');
+          if(f.balance>0)return reject('Faltan '+f.balance+' COP para cubrir el total.');
+          if(f.transferExcess>0)return reject('Hay excedente de transferencia: requiere reembolso administrativo, no cambio.');
+          if(s.changeGiven<f.change)return reject('Falta confirmar que entregó el cambio de '+f.change+' COP.');
+          s.status='Finalizada';s.saved=false;s.receipt={number:'COM-'+s.id,product:s.product,qty:s.qty,price:s.price,total:f.total,cash:s.cash,transfer:s.transfer,change:s.changeGiven,free:s.freeAuthorized};note='Venta finalizada explícitamente. Comprobante comercial inmutable creado; mercancía y comprobante habilitados para entrega.';break;
+        default:return reject('Acción desconocida.');
+      }
+    }
+    n.message=note;n.log.push(a.label+' — '+note);return n;
+  }
+  return {initial,reduce,figures};
+})();
+
+// DOM adapter: all business transitions go through Model.reduce.
+const $=id=>document.getElementById(id),money=n=>new Intl.NumberFormat('es-CO',{style:'currency',currency:'COP',maximumFractionDigits:0}).format(n),yes=b=>b?'Sí':'No';
+let state=Model.initial(),tab=0,step=0;
+const action=(label,type,extra={})=>({label,type,...extra});
+const scenarios=[
+ ['Efectivo y cambio','Reciba $15.000 para una venta de $10.000; entregar cambio no finaliza la venta.',[action('Guardar precuenta','save'),action('Recibí $15.000 en efectivo','cash',{amount:15000}),action('Confirmar entrega de $5.000 de cambio','change'),action('Finalizar venta','finalize'),action('Entregar mercancía','deliver'),action('Registrar envío manual exitoso','share',{outcome:'Compartido manualmente con éxito'})]],
+ ['Pago mixto','La transferencia se registra primero, pero solo después de verificar el depósito.',[action('Esperar transferencia','wait'),action('Ver soporte del cliente (sin pago)','proof'),action('Verifiqué depósito de $4.000','transfer',{amount:4000}),action('Recibí $6.000 en efectivo','cash',{amount:6000}),action('Finalizar venta','finalize')]],
+ ['Espera, edición y cancelación','Sin dinero recibido puede editar y cancelar sin autorización.',[action('Guardar precuenta','save'),action('Esperar transferencia','wait'),action('Ver soporte (no acredita pago)','proof'),action('Cambiar a dos cuadernos','edit',{product:'Cuaderno',qty:2,price:10000}),action('Cancelar sin autorización','cancel',{admin:false}),action('Comprobar cierre de turno','close')]],
+ ['Bloqueo y devolución','Después de recibir efectivo no se edita; la cancelación autorizada deja una devolución trazable.',[action('Recibí $4.000 en efectivo','cash',{amount:4000}),action('Intentar cambiar cantidad (rechazo esperado)','edit',{product:'Cuaderno',qty:2,price:10000}),action('Intentar cancelar sin autorización (rechazo esperado)','cancel',{admin:false}),action('Cancelar con autorización','cancel',{admin:true,reason:'El cliente desistió de la compra después del abono.'}),action('Intentar cerrar turno (rechazo esperado)','close'),action('Registrar devolución autorizada de $4.000','refund',{admin:true,amount:4000}),action('Comprobar cierre de turno','close')]],
+ ['Cambio pendiente','Cubrir el total no finaliza; tampoco permite entregar la mercancía.',[action('Recibí $15.000 en efectivo','cash',{amount:15000}),action('Intentar finalizar sin entregar cambio','finalize'),action('Intentar entregar mercancía','deliver'),action('Confirmar cambio entregado','change'),action('Finalizar venta','finalize')]],
+ ['Exceso por transferencia','El excedente bancario no se convierte en cambio de caja.',[action('Verifiqué depósito de $15.000','transfer',{amount:15000}),action('Intentar entregar cambio en efectivo','change'),action('Intentar finalizar','finalize'),action('Registrar reembolso administrativo de $5.000','reimburse',{admin:true}),action('Finalizar venta','finalize')]],
+ ['Venta gratuita','El total cero requiere autorización, no un pago ficticio.',[action('Preparar obsequio de $0','edit',{product:'Obsequio',qty:1,price:0}),action('Intentar registrar pago de $0','cash',{amount:0}),action('Intentar finalizar sin autorización','finalize'),action('Autorizar venta gratuita','free',{admin:true}),action('Finalizar venta','finalize')]]
+];
+const controls=[['Nueva venta','new'],['Guardar precuenta / reservar','save'],['Aplicar producto, cantidad y precio','edit'],['Esperar transferencia','wait'],['Ver soporte del cliente (no es pago)','proof'],['Recibí efectivo físicamente','cash'],['Verifiqué depósito: registrar transferencia','transfer'],['Corregir acumulado de efectivo (usa importe y motivo)','correct'],['Deshacer transferencia (usa importe y autorización)','undo'],['Confirmar cambio entregado','change'],['Registrar reembolso administrativo del excedente','reimburse'],['Autorizar venta gratuita','free'],['Finalizar venta','finalize'],['Entregar mercancía','deliver'],['Cancelar venta','cancel'],['Registrar devolución realizada (usa importe)','refund'],['Registrar depósito tardío verificado','late'],['Comprobar cierre de turno','close']];
+function dispatch(a){state=Model.reduce(state,a);render();}
+function button(text,fn){const b=document.createElement('button');b.type='button';b.textContent=text;b.onclick=fn;return b;}
+function fields(host,entries){host.replaceChildren();const dl=document.createElement('dl');for(const [k,v]of entries){const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=k;dd.textContent=v;dl.append(dt,dd);}host.append(dl);}
+function render(){
+ const s=state.sales.find(x=>x.id===state.selected),f=Model.figures(s);
+ $('feedback').textContent=state.message;
+ fields($('state'),[['Venta',s.id],['Estado',s.status],['Producto',s.product],['Cantidad',s.qty],['Precio unitario',money(s.price)],['Total',money(f.total)],['Precuenta guardada',yes(s.saved)],['Cantidad reservada',s.saved?s.qty:0],['Esperando transferencia',yes(s.waiting)],['Soporte visto (no es pago)',yes(s.proof)],['Recibió dinero alguna vez',yes(s.everReceived)],['Edición habilitada',yes(!s.everReceived&&s.status==='En preparación')],['Efectivo registrado',money(s.cash)],['Transferencia verificada neta',money(s.transfer)],['Cobertura registrada',money(f.paid)],['Falta para cubrir',money(f.balance)],['Cambio calculado en efectivo',money(f.change)],['Cambio entregado',money(s.changeGiven)],['Excedente bancario',money(f.transferExcess)],['Devolución pendiente por cancelación',money(s.refundDue)],['Venta gratuita autorizada',yes(s.freeAuthorized)],['Entrega habilitada',yes(s.status==='Finalizada')],['Mercancía entregada',yes(s.delivered)],['Devoluciones realizadas',s.refunds.length?s.refunds.map(r=>r.reason+': '+money(r.amount)+' · autorizada').join('; '):'Ninguna']]);
+ const pending=state.sales.reduce((sum,x)=>sum+x.refundDue+(x.status==='En preparación'?Model.figures(x).transferExcess:0),0);
+ fields($('accounts'),[['Ventas coexistentes',state.sales.length],['Reservas vigentes',state.sales.filter(x=>x.saved).map(x=>'Venta '+x.id+': '+x.qty+' × '+x.product).join('; ')||'Ninguna'],['Devoluciones pendientes del turno',money(pending)],['Cierre por devoluciones',pending?'Bloqueado':'Sin bloqueo por devoluciones'],['Última comprobación aprobada',yes(state.closed)]]);
+ const r=s.receipt;
+ fields($('receipt'),r?[['Tipo','Comprobante comercial digital · NO es factura fiscal'],['Número',r.number],['Detalle inmutable',r.qty+' × '+r.product+' a '+money(r.price)],['Total',money(r.total)],['Efectivo',money(r.cash)],['Transferencia',money(r.transfer)],['Cambio',money(r.change)],['Gratuidad autorizada',yes(r.free)],['Intentos manuales',s.attempts.join('; ')||'Ninguno']]:[['Disponibilidad','No emitido: requiere finalización explícita']]);
+ $('selector').replaceChildren();for(const x of state.sales)$('selector').append(button('Venta '+x.id+' · '+x.status,()=>dispatch(action('Seleccionar venta','select',{id:x.id}))));
+ $('history').replaceChildren();for(const line of state.log){const li=document.createElement('li');li.textContent=line;$('history').append(li);}
+ $('tabs').replaceChildren();scenarios.forEach(([name],i)=>{const b=button(name,()=>{tab=i;step=0;state=Model.initial();render();});b.setAttribute('role','tab');b.setAttribute('aria-selected',String(i===tab));$('tabs').append(b);});
+ $('guide').replaceChildren();const p=document.createElement('p');p.textContent=scenarios[tab][1];$('guide').append(p);scenarios[tab][2].forEach((a,i)=>{const b=button((i+1)+'. '+a.label,()=>{step++;dispatch(a);});b.disabled=i!==step;$('guide').append(b);});
+ if(step===scenarios[tab][2].length){const done=document.createElement('p');done.textContent='Recorrido terminado. ¿El orden y los bloqueos tienen sentido en su caja? Puede seguir explorando o reiniciar la pestaña.';$('guide').append(done);}
+}
+for(const [label,type]of controls)$('controls').append(button(label,()=>dispatch(action(label,type,{product:$('product').value,qty:Number($('qty').value),price:Number($('price').value),amount:Number($('amount').value),reason:$('reason').value,admin:$('admin').value==='yes'}))));
+for(const outcome of ['Compartido manualmente con éxito','Intento manual fallido','Entregado manualmente al cliente'])$('controls').append(button(outcome,()=>dispatch(action(outcome,'share',{outcome}))));
+render();
+</script>
+</html>
