@@ -19,3 +19,4 @@ Validate, with the store owner, a clickable interaction sequence from sale prepa
 - Prototype: `prototypes/checkout-finalization-prototype.html`
 - Verification: inline JavaScript syntax passed; independent static review traced all seven scenarios with no remaining blockers.
 - Owner validation: Q1–Q4 confirmed without requested changes; sequence, reservations, reimbursement-before-finalization, and correction/refund distinction accepted.
+- Work-unit commit: `5e81378` (`docs(planning): prototype checkout finalization flow`).
