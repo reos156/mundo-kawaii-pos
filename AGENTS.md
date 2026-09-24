@@ -1,15 +1,12 @@
 # Project Agent Instructions
 
-## Project workflows
-
-- This project opts into the global prepare-only `prepare-sdd-work-unit` skill via `.pi/prepare-sdd-work-unit.json`, only when explicitly invoked as `/skill:prepare-sdd-work-unit WU-XX`.
-
 ## Agent skills
 ### Issue tracker
 Issues and Wayfinder decision maps live in GitHub Issues. See `docs/agents/issue-tracker.md`.
+Write every GitHub artifact created for this project—including issues, decision tickets, pull requests, and review-facing descriptions—in Spanish.
 ### Triage labels
 Use the five default Matt Pocock triage labels. See `docs/agents/triage-labels.md`.
 ### Domain docs
 Use the single-context layout. See `docs/agents/domain.md`.
-### Wayfinder and Gentle SDD
-Wayfinder only resolves decision maps. A resolved map is input evidence for Gentle SDD/OpenSpec, which remains the source of truth. Do not use `to-spec`, `to-tickets`, or `implement` for this flow.
+### Wayfinder boundary
+Wayfinder resolves decision maps. A resolved map is durable planning evidence. Select the next workflow explicitly for each effort.
