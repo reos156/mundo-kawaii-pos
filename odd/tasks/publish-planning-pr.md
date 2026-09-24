@@ -16,7 +16,7 @@ Commit the pending local skill installation, publish `feat/planning`, and open a
 
 - [x] Audit pending files and review workload.
 - [x] Create and approve the required base-repository issue.
-- [ ] Verify and commit the pending local skills and lockfile.
+- [x] Verify and commit the pending local skills and lockfile.
 - [ ] Push `feat/planning` and create the pull request.
 - [ ] Apply exactly one `type:*` label and `size:exception`.
 - [ ] Observe and report automated checks.
@@ -26,4 +26,5 @@ Commit the pending local skill installation, publish `feat/planning`, and open a
 - Lockfile JSON shape passed.
 - Eleven new lock entries and skill roots matched.
 - Both shell templates passed `bash -n`.
-- ShellCheck is pending because it is unavailable on the host.
+- ShellCheck ran transiently through `npx`: default mode reported only upstream `SC2034` for the unused `RED` color constant; the documented vendored-template run with `-e SC2034` passed without diagnostics.
+- Work-unit commit: `c4d727b` (`chore(skills): install planning workflow toolkit`).
