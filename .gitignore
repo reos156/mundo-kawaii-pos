@@ -2,3 +2,15 @@
 .atl/
 .pi/gentle-ai/
 .codegraph/
+
+# Bun and web workspace artifacts
+node_modules/
+dist/
+.turbo/
+
+# Supabase local state and credentials
+supabase/.branches/
+supabase/.temp/
+.env
+.env.*
+!.env.example
