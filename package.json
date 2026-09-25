@@ -1,0 +1,21 @@
+{
+  "name": "mundo-kawaii-pos",
+  "private": true,
+  "packageManager": "bun@1.2.15",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
+    "build": "turbo run build",
+    "db:start": "supabase start",
+    "db:reset": "supabase db reset",
+    "db:test": "supabase test db"
+  },
+  "devDependencies": {
+    "supabase": "^2.33.9",
+    "turbo": "^2.5.0"
+  }
+}
