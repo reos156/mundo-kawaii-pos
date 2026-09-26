@@ -114,7 +114,13 @@ export function HomeRoute({ client }: HomeRouteProps = {}) {
       const nextSession = await supabase.signInWithPassword(email, password);
       if (actionEpoch !== sessionEpoch.current) return;
       setPassword("");
-      await loadAccount(nextSession, actionEpoch);
+      try {
+        await loadAccount(nextSession, actionEpoch);
+      } catch {
+        if (actionEpoch !== sessionEpoch.current) return;
+        setPageError("No pudimos verificar tu rol.");
+        setAppState("error");
+      }
     } catch {
       if (actionEpoch !== sessionEpoch.current) return;
       setSignInError("No se pudo iniciar sesión. Verificá el correo, la contraseña y la conexión.");
