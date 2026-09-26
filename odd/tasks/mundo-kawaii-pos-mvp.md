@@ -85,7 +85,7 @@ The POS is a system of record for product availability and store money. Checkout
 
 ### Child work units
 - [x] **POS05-TRACKER-PLAN — Record the approved chain plan on `feat/mvp`.** Work-unit commit: `c3bec73` (`docs(odd): plan POS-05 feature branch chain`). `git diff --cached --check` passed; no runtime harness applies because this is a planning-document-only commit.
-- [x] **POS05-TRACKER-PR — Publish the tracker branch.** Pushed `feat/mvp` to `origin`; opened draft PR [#80](https://github.com/reos156/mundo-kawaii-pos/pull/80) to `main` with `Refs #72` and `type:feature`. `gh pr checks 80` reported no checks and the repository has no configured workflows. Tracker remains draft; no merge.
+- [x] **POS05-TRACKER-PR — Publish the tracker branch.** Work-unit progress record: commit `6a5c35f` (`docs(odd): record POS-05 tracker PR`). Pushed `feat/mvp` to `origin`; opened draft PR [#80](https://github.com/reos156/mundo-kawaii-pos/pull/80) to `main` with `Refs #72` and `type:feature`. `gh pr checks 80` reported no checks and the repository has no configured workflows. Tracker remains draft; no merge.
 - [~] **POS05-C1 — Supabase client/session.** `apps/pos-web/src/lib/supabase.ts` plus an isolated `supabase.test.ts` auth/client test. Parent: `feat/mvp`; proposed child: `feat/pos05-01-supabase-session`.
 - [ ] **POS05-C2 — Catalog/inventory data operations.** `catalog-inventory.ts` and its behavior tests, including the remainder of `catalog-inventory.test.ts`. Parent: C1; proposed child: `feat/pos05-02-catalog-inventory`.
 - [ ] **POS05-C3 — Sign-in/session route.** Route shell and provisioned-user authentication/session behavior with their tests. Parent: C2; proposed child: `feat/pos05-03-auth-route`.
