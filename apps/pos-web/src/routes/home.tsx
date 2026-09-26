@@ -5,12 +5,16 @@ import {
   type SupabaseSession,
 } from "../lib/supabase";
 import {
+  createProduct,
   loadCatalog,
   loadMovementPage,
+  updateProduct,
   type InventoryMovement,
   type Product,
+  type ProductInput,
 } from "../lib/catalog-inventory";
 import { InventoryView, MovementHistoryView } from "./inventory-view";
+import { ProductAdminForm, type ProductAdminFormState, type ProductDraft } from "./product-admin-form";
 
 interface HomeRouteProps {
   client?: SupabaseClient | null;
@@ -22,6 +26,14 @@ type OperatorRole = "cashier" | "administrator";
 function roleLabel(role: OperatorRole): string {
   return role === "administrator" ? "Administrador" : "Cajero";
 }
+
+const emptyProductAdminState: ProductAdminFormState = {
+  draft: { sku: "", name: "", description: "", priceCop: "" },
+  editingProductId: null,
+  busy: false,
+  message: "",
+  error: "",
+};
 
 export function HomeRoute({ client }: HomeRouteProps = {}) {
   const supabase = useMemo(
@@ -40,6 +52,7 @@ export function HomeRoute({ client }: HomeRouteProps = {}) {
   const [hasOlderMovements, setHasOlderMovements] = useState(false);
   const [historyPage, setHistoryPage] = useState(0);
   const [role, setRole] = useState<OperatorRole | null>(null);
+  const [productAdminState, setProductAdminState] = useState(emptyProductAdminState);
   const [pageError, setPageError] = useState("");
   const [signInError, setSignInError] = useState("");
   const [signInBusy, setSignInBusy] = useState(false);
@@ -146,6 +159,70 @@ export function HomeRoute({ client }: HomeRouteProps = {}) {
     };
   }, [appState, historyPage, role, session, supabase]);
 
+  function handleProductDraftChange(update: Partial<ProductDraft>) {
+    setProductAdminState((current) => ({
+      ...current,
+      draft: { ...current.draft, ...update },
+      error: "",
+      message: "",
+    }));
+  }
+
+  function handleEditProduct(product: Product) {
+    setProductAdminState({
+      ...emptyProductAdminState,
+      editingProductId: product.id,
+      draft: {
+        sku: product.sku,
+        name: product.name,
+        description: product.description ?? "",
+        priceCop: String(product.price_cop),
+      },
+    });
+  }
+
+  async function handleProductSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!supabase || role !== "administrator" || !session || productAdminState.busy) return;
+
+    const actionEpoch = sessionEpoch.current;
+    const { draft, editingProductId } = productAdminState;
+    const input: ProductInput = { ...draft, priceCop: Number(draft.priceCop) };
+    setProductAdminState((current) => ({ ...current, busy: true, error: "", message: "" }));
+    try {
+      if (editingProductId) await updateProduct(supabase, editingProductId, input);
+      else await createProduct(supabase, input);
+    } catch {
+      if (actionEpoch !== sessionEpoch.current) return;
+      setProductAdminState((current) => ({
+        ...current,
+        busy: false,
+        error: "No pudimos guardar el producto. Revisá los datos y tus permisos.",
+      }));
+      return;
+    }
+
+    if (actionEpoch !== sessionEpoch.current) return;
+    setProductAdminState({ ...emptyProductAdminState, busy: true });
+    try {
+      const catalog = await loadCatalog(supabase);
+      if (actionEpoch !== sessionEpoch.current) return;
+      setProducts(catalog);
+      setProductAdminState({
+        ...emptyProductAdminState,
+        message: editingProductId ? "Producto actualizado." : "Producto creado.",
+      });
+    } catch {
+      if (actionEpoch !== sessionEpoch.current) return;
+      setProductAdminState({
+        ...emptyProductAdminState,
+        message: editingProductId
+          ? "Los cambios sí quedaron guardados, pero no pudimos actualizar el catálogo."
+          : "El producto sí quedó guardado, pero no pudimos actualizar el catálogo.",
+      });
+    }
+  }
+
   async function handleSignIn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!supabase || signInBusy) return;
@@ -184,6 +261,7 @@ export function HomeRoute({ client }: HomeRouteProps = {}) {
     setMovements([]);
     setHasOlderMovements(false);
     setHistoryPage(0);
+    setProductAdminState(emptyProductAdminState);
     setSignOutError("");
     try {
       await supabase.signOut();
@@ -358,6 +436,16 @@ export function HomeRoute({ client }: HomeRouteProps = {}) {
           {appState === "ready" && session && role && (
             <div className="space-y-8">
               <h2 className="sr-only">Sesión verificada</h2>
+              {role === "administrator" && (
+                <ProductAdminForm
+                  products={products}
+                  state={productAdminState}
+                  onDraftChange={handleProductDraftChange}
+                  onSubmit={(event) => void handleProductSubmit(event)}
+                  onEditProduct={handleEditProduct}
+                  onCancelEdit={() => setProductAdminState(emptyProductAdminState)}
+                />
+              )}
               <InventoryView products={products} operatorRoleLabel={roleLabel(role)} />
               <MovementHistoryView
                 movements={movements}
