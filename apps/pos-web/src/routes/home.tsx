@@ -4,6 +4,13 @@ import {
   type SupabaseClient,
   type SupabaseSession,
 } from "../lib/supabase";
+import {
+  loadCatalog,
+  loadMovementPage,
+  type InventoryMovement,
+  type Product,
+} from "../lib/catalog-inventory";
+import { InventoryView, MovementHistoryView } from "./inventory-view";
 
 interface HomeRouteProps {
   client?: SupabaseClient | null;
@@ -25,8 +32,13 @@ export function HomeRoute({ client }: HomeRouteProps = {}) {
     supabase ? "loading" : "configuration",
   );
   const loadGeneration = useRef(0);
+  const inventoryGeneration = useRef(0);
   const sessionEpoch = useRef(0);
   const [session, setSession] = useState<SupabaseSession | null>(null);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [movements, setMovements] = useState<InventoryMovement[]>([]);
+  const [hasOlderMovements, setHasOlderMovements] = useState(false);
+  const [historyPage, setHistoryPage] = useState(0);
   const [role, setRole] = useState<OperatorRole | null>(null);
   const [pageError, setPageError] = useState("");
   const [signInError, setSignInError] = useState("");
@@ -101,6 +113,39 @@ export function HomeRoute({ client }: HomeRouteProps = {}) {
     };
   }, [loadAccount, supabase]);
 
+  useEffect(() => {
+    if (!supabase || appState !== "ready" || !session || !role) {
+      setProducts([]);
+      setMovements([]);
+      setHasOlderMovements(false);
+      setHistoryPage(0);
+      return;
+    }
+    const epoch = sessionEpoch.current;
+    const request = ++inventoryGeneration.current;
+    let active = true;
+    const current = () =>
+      active &&
+      epoch === sessionEpoch.current &&
+      request === inventoryGeneration.current;
+    void Promise.all([loadCatalog(supabase), loadMovementPage(supabase, historyPage)])
+      .then(([catalog, page]) => {
+        if (!current()) return;
+        setProducts(catalog);
+        setMovements(page.items);
+        setHasOlderMovements(page.hasNext);
+      })
+      .catch(() => {
+        if (!current()) return;
+        setPageError("No pudimos cargar el inventario.");
+        setAppState("error");
+      });
+    return () => {
+      active = false;
+      inventoryGeneration.current += 1;
+    };
+  }, [appState, historyPage, role, session, supabase]);
+
   async function handleSignIn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!supabase || signInBusy) return;
@@ -134,6 +179,11 @@ export function HomeRoute({ client }: HomeRouteProps = {}) {
     if (!supabase) return;
     const actionEpoch = ++sessionEpoch.current;
     loadGeneration.current += 1;
+    inventoryGeneration.current += 1;
+    setProducts([]);
+    setMovements([]);
+    setHasOlderMovements(false);
+    setHistoryPage(0);
     setSignOutError("");
     try {
       await supabase.signOut();
@@ -306,15 +356,17 @@ export function HomeRoute({ client }: HomeRouteProps = {}) {
           )}
 
           {appState === "ready" && session && role && (
-            <article className="rounded-3xl bg-white p-8 shadow-sm">
-              <h2 className="text-2xl font-semibold">Sesión verificada</h2>
-              <p className="mt-3 text-slate-700">
-                {currentOperator} · {roleLabel(role)}. Tu acceso al POS está listo.
-              </p>
-              <p className="mt-2 text-sm text-slate-600">
-                El inventario estará disponible en la próxima etapa.
-              </p>
-            </article>
+            <div className="space-y-8">
+              <h2 className="sr-only">Sesión verificada</h2>
+              <InventoryView products={products} operatorRoleLabel={roleLabel(role)} />
+              <MovementHistoryView
+                movements={movements}
+                productCount={products.length}
+                page={historyPage}
+                hasOlderMovements={hasOlderMovements}
+                onPageChange={setHistoryPage}
+              />
+            </div>
           )}
         </section>
       </div>
