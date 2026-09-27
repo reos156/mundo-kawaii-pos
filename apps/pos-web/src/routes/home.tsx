@@ -5,9 +5,11 @@ import {
   type SupabaseSession,
 } from "../lib/supabase";
 import {
+  adjustStock,
   createProduct,
   loadCatalog,
   loadMovementPage,
+  receiveStock,
   updateProduct,
   type InventoryMovement,
   type Product,
@@ -15,6 +17,11 @@ import {
 } from "../lib/catalog-inventory";
 import { InventoryView, MovementHistoryView } from "./inventory-view";
 import { ProductAdminForm, type ProductAdminFormState, type ProductDraft } from "./product-admin-form";
+import {
+  StockMovementForm,
+  type MovementDraft,
+  type StockMovementFormState,
+} from "./stock-movement-form";
 
 interface HomeRouteProps {
   client?: SupabaseClient | null;
@@ -35,6 +42,13 @@ const emptyProductAdminState: ProductAdminFormState = {
   error: "",
 };
 
+const emptyStockMovementState: StockMovementFormState = {
+  draft: { productId: "", kind: "receipt", quantity: "", note: "" },
+  busy: false,
+  message: "",
+  error: "",
+};
+
 export function HomeRoute({ client }: HomeRouteProps = {}) {
   const supabase = useMemo(
     () => (client === undefined ? getSupabaseClient() : client),
@@ -46,6 +60,7 @@ export function HomeRoute({ client }: HomeRouteProps = {}) {
   const loadGeneration = useRef(0);
   const inventoryGeneration = useRef(0);
   const sessionEpoch = useRef(0);
+  const signOutInProgress = useRef(false);
   const [session, setSession] = useState<SupabaseSession | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [movements, setMovements] = useState<InventoryMovement[]>([]);
@@ -53,6 +68,8 @@ export function HomeRoute({ client }: HomeRouteProps = {}) {
   const [historyPage, setHistoryPage] = useState(0);
   const [role, setRole] = useState<OperatorRole | null>(null);
   const [productAdminState, setProductAdminState] = useState(emptyProductAdminState);
+  const [stockMovementState, setStockMovementState] = useState(emptyStockMovementState);
+  const stockMovementInFlight = useRef(false);
   const [pageError, setPageError] = useState("");
   const [signInError, setSignInError] = useState("");
   const [signInBusy, setSignInBusy] = useState(false);
@@ -223,6 +240,126 @@ export function HomeRoute({ client }: HomeRouteProps = {}) {
     }
   }
 
+  function handleStockMovementDraftChange(update: Partial<MovementDraft>) {
+    setStockMovementState((current) => ({
+      ...current,
+      draft: { ...current.draft, ...update },
+      error: "",
+      message: "",
+    }));
+  }
+
+  async function handleStockMovementSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (
+      !supabase ||
+      role !== "administrator" ||
+      !session ||
+      signOutInProgress.current ||
+      stockMovementState.busy ||
+      stockMovementInFlight.current
+    ) {
+      return;
+    }
+
+    const { draft } = stockMovementState;
+    const quantity = Number(draft.quantity);
+    const validationError = !draft.productId.trim()
+      ? "Selecciona un producto."
+      : !Number.isSafeInteger(quantity)
+        ? "La cantidad debe ser un número entero seguro."
+        : draft.kind === "receipt" && quantity <= 0
+          ? "La entrada debe ser mayor que cero."
+          : draft.kind === "adjustment" && quantity === 0
+            ? "El ajuste debe ser distinto de cero."
+            : "";
+
+    if (validationError) {
+      setStockMovementState((current) => ({
+        ...current,
+        error: validationError,
+        message: "",
+      }));
+      return;
+    }
+
+    const actionEpoch = sessionEpoch.current;
+    stockMovementInFlight.current = true;
+    setStockMovementState((current) => ({ ...current, busy: true, error: "", message: "" }));
+
+    try {
+      if (draft.kind === "receipt") {
+        await receiveStock(supabase, {
+          productId: draft.productId,
+          quantity,
+          note: draft.note,
+        });
+      } else {
+        await adjustStock(supabase, {
+          productId: draft.productId,
+          quantityDelta: quantity,
+          note: draft.note,
+        });
+      }
+    } catch {
+      if (actionEpoch !== sessionEpoch.current) return;
+      stockMovementInFlight.current = false;
+      setStockMovementState((current) => ({
+        ...current,
+        busy: false,
+        error: "No pudimos registrar el movimiento. Revisa los datos y tus permisos; el borrador se conservó.",
+        message: "",
+      }));
+      return;
+    }
+
+    if (actionEpoch !== sessionEpoch.current) return;
+
+    setStockMovementState({
+      ...emptyStockMovementState,
+      busy: true,
+    });
+    const refreshGeneration = ++inventoryGeneration.current;
+
+    try {
+      const [catalog, page] = await Promise.all([
+        loadCatalog(supabase),
+        loadMovementPage(supabase, historyPage),
+      ]);
+      if (actionEpoch !== sessionEpoch.current) return;
+
+      if (refreshGeneration !== inventoryGeneration.current) {
+        setStockMovementState({
+          ...emptyStockMovementState,
+          message: "El movimiento quedó registrado. La vista se está actualizando.",
+        });
+        return;
+      }
+
+      setProducts(catalog);
+      setMovements(page.items);
+      setHasOlderMovements(page.hasNext);
+      setStockMovementState({
+        ...emptyStockMovementState,
+        message:
+          draft.kind === "receipt"
+            ? "Entrada registrada y vista actualizada."
+            : "Ajuste registrado y vista actualizada.",
+      });
+    } catch {
+      if (actionEpoch !== sessionEpoch.current) return;
+      setStockMovementState({
+        ...emptyStockMovementState,
+        message:
+          refreshGeneration === inventoryGeneration.current
+            ? "El movimiento quedó registrado, pero no pudimos actualizar el inventario y el historial. No lo registres de nuevo; actualiza la vista."
+            : "El movimiento quedó registrado. La vista se está actualizando.",
+      });
+    } finally {
+      if (actionEpoch === sessionEpoch.current) stockMovementInFlight.current = false;
+    }
+  }
+
   async function handleSignIn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!supabase || signInBusy) return;
@@ -253,7 +390,8 @@ export function HomeRoute({ client }: HomeRouteProps = {}) {
   }
 
   async function handleSignOut() {
-    if (!supabase) return;
+    if (!supabase || signOutInProgress.current) return;
+    signOutInProgress.current = true;
     const actionEpoch = ++sessionEpoch.current;
     loadGeneration.current += 1;
     inventoryGeneration.current += 1;
@@ -262,6 +400,8 @@ export function HomeRoute({ client }: HomeRouteProps = {}) {
     setHasOlderMovements(false);
     setHistoryPage(0);
     setProductAdminState(emptyProductAdminState);
+    stockMovementInFlight.current = false;
+    setStockMovementState(emptyStockMovementState);
     setSignOutError("");
     try {
       await supabase.signOut();
@@ -276,6 +416,7 @@ export function HomeRoute({ client }: HomeRouteProps = {}) {
         setSignInBusy(false);
         setAppState("signed-out");
       }
+      signOutInProgress.current = false;
     }
   }
 
@@ -444,6 +585,14 @@ export function HomeRoute({ client }: HomeRouteProps = {}) {
                   onSubmit={(event) => void handleProductSubmit(event)}
                   onEditProduct={handleEditProduct}
                   onCancelEdit={() => setProductAdminState(emptyProductAdminState)}
+                />
+              )}
+              {role === "administrator" && (
+                <StockMovementForm
+                  products={products}
+                  state={stockMovementState}
+                  onDraftChange={handleStockMovementDraftChange}
+                  onSubmit={(event) => void handleStockMovementSubmit(event)}
                 />
               )}
               <InventoryView products={products} operatorRoleLabel={roleLabel(role)} />
