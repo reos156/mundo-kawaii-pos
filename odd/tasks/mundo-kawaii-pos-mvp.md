@@ -92,7 +92,7 @@ The POS is a system of record for product availability and store money. Checkout
 - [ ] **POS05-C4 — Read-only inventory/history.** On-hand inventory, bounded movement history and cashier read-only behavior with their tests; isolate in `apps/pos-web/src/routes/inventory-view.tsx`. Parent: C3; proposed child: `feat/pos05-04-inventory-history`.
 - [ ] **POS05-C5 — Product administration.** Admin-only product creation/edit UI with its tests; isolate in `apps/pos-web/src/routes/product-admin-form.tsx`. Parent: C4; proposed child: `feat/pos05-05-product-admin`.
 - [ ] **POS05-C6 — Stock receipt/adjustment UI.** Admin-only receipt/adjustment forms with their tests; isolate in `apps/pos-web/src/routes/stock-movement-form.tsx`. Parent: C5; proposed child: `feat/pos05-06-stock-movements`.
-- [ ] **POS05-PUBLISH — Push and publish the six-child PR chain.** Spanish PR bodies link `Refs #72`; tracker stays draft/no-merge. Inspect each exact diff and report checks. Do not merge any PR.
+- [x] **POS05-PUBLISH — Push and publish the six-child PR chain.** Published draft tracker #80 and child PRs #81–#86; all remain open and unmerged. Each child targets its immediate parent and links `Refs #72` in Spanish Chain Context. Exactly one `type:feature` label is present per PR. The user explicitly approved full size exceptions for C5 (619 changed lines) and C6 (730 changed lines); C1 retains its earlier exception. No CI checks were reported.
 
 ## Progress
 - Requirements, DIAN scope, transfer stock-hold behavior, and strict TDD/Vitest selection confirmed by the user. POS-04 is intentionally split into database and UI slices to keep inventory invariants and review scope focused.
