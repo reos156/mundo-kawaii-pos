@@ -4,6 +4,24 @@ import {
   type SupabaseClient,
   type SupabaseSession,
 } from "../lib/supabase";
+import {
+  adjustStock,
+  createProduct,
+  loadCatalog,
+  loadMovementPage,
+  receiveStock,
+  updateProduct,
+  type InventoryMovement,
+  type Product,
+  type ProductInput,
+} from "../lib/catalog-inventory";
+import { InventoryView, MovementHistoryView } from "./inventory-view";
+import { ProductAdminForm, type ProductAdminFormState, type ProductDraft } from "./product-admin-form";
+import {
+  StockMovementForm,
+  type MovementDraft,
+  type StockMovementFormState,
+} from "./stock-movement-form";
 
 interface HomeRouteProps {
   client?: SupabaseClient | null;
@@ -16,6 +34,21 @@ function roleLabel(role: OperatorRole): string {
   return role === "administrator" ? "Administrador" : "Cajero";
 }
 
+const emptyProductAdminState: ProductAdminFormState = {
+  draft: { sku: "", name: "", description: "", priceCop: "" },
+  editingProductId: null,
+  busy: false,
+  message: "",
+  error: "",
+};
+
+const emptyStockMovementState: StockMovementFormState = {
+  draft: { productId: "", kind: "receipt", quantity: "", note: "" },
+  busy: false,
+  message: "",
+  error: "",
+};
+
 export function HomeRoute({ client }: HomeRouteProps = {}) {
   const supabase = useMemo(
     () => (client === undefined ? getSupabaseClient() : client),
@@ -25,9 +58,18 @@ export function HomeRoute({ client }: HomeRouteProps = {}) {
     supabase ? "loading" : "configuration",
   );
   const loadGeneration = useRef(0);
+  const inventoryGeneration = useRef(0);
   const sessionEpoch = useRef(0);
+  const signOutInProgress = useRef(false);
   const [session, setSession] = useState<SupabaseSession | null>(null);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [movements, setMovements] = useState<InventoryMovement[]>([]);
+  const [hasOlderMovements, setHasOlderMovements] = useState(false);
+  const [historyPage, setHistoryPage] = useState(0);
   const [role, setRole] = useState<OperatorRole | null>(null);
+  const [productAdminState, setProductAdminState] = useState(emptyProductAdminState);
+  const [stockMovementState, setStockMovementState] = useState(emptyStockMovementState);
+  const stockMovementInFlight = useRef(false);
   const [pageError, setPageError] = useState("");
   const [signInError, setSignInError] = useState("");
   const [signInBusy, setSignInBusy] = useState(false);
@@ -101,6 +143,223 @@ export function HomeRoute({ client }: HomeRouteProps = {}) {
     };
   }, [loadAccount, supabase]);
 
+  useEffect(() => {
+    if (!supabase || appState !== "ready" || !session || !role) {
+      setProducts([]);
+      setMovements([]);
+      setHasOlderMovements(false);
+      setHistoryPage(0);
+      return;
+    }
+    const epoch = sessionEpoch.current;
+    const request = ++inventoryGeneration.current;
+    let active = true;
+    const current = () =>
+      active &&
+      epoch === sessionEpoch.current &&
+      request === inventoryGeneration.current;
+    void Promise.all([loadCatalog(supabase), loadMovementPage(supabase, historyPage)])
+      .then(([catalog, page]) => {
+        if (!current()) return;
+        setProducts(catalog);
+        setMovements(page.items);
+        setHasOlderMovements(page.hasNext);
+      })
+      .catch(() => {
+        if (!current()) return;
+        setPageError("No pudimos cargar el inventario.");
+        setAppState("error");
+      });
+    return () => {
+      active = false;
+      inventoryGeneration.current += 1;
+    };
+  }, [appState, historyPage, role, session, supabase]);
+
+  function handleProductDraftChange(update: Partial<ProductDraft>) {
+    setProductAdminState((current) => ({
+      ...current,
+      draft: { ...current.draft, ...update },
+      error: "",
+      message: "",
+    }));
+  }
+
+  function handleEditProduct(product: Product) {
+    setProductAdminState({
+      ...emptyProductAdminState,
+      editingProductId: product.id,
+      draft: {
+        sku: product.sku,
+        name: product.name,
+        description: product.description ?? "",
+        priceCop: String(product.price_cop),
+      },
+    });
+  }
+
+  async function handleProductSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!supabase || role !== "administrator" || !session || productAdminState.busy) return;
+
+    const actionEpoch = sessionEpoch.current;
+    const { draft, editingProductId } = productAdminState;
+    const input: ProductInput = { ...draft, priceCop: Number(draft.priceCop) };
+    setProductAdminState((current) => ({ ...current, busy: true, error: "", message: "" }));
+    try {
+      if (editingProductId) await updateProduct(supabase, editingProductId, input);
+      else await createProduct(supabase, input);
+    } catch {
+      if (actionEpoch !== sessionEpoch.current) return;
+      setProductAdminState((current) => ({
+        ...current,
+        busy: false,
+        error: "No pudimos guardar el producto. Revisá los datos y tus permisos.",
+      }));
+      return;
+    }
+
+    if (actionEpoch !== sessionEpoch.current) return;
+    setProductAdminState({ ...emptyProductAdminState, busy: true });
+    try {
+      const catalog = await loadCatalog(supabase);
+      if (actionEpoch !== sessionEpoch.current) return;
+      setProducts(catalog);
+      setProductAdminState({
+        ...emptyProductAdminState,
+        message: editingProductId ? "Producto actualizado." : "Producto creado.",
+      });
+    } catch {
+      if (actionEpoch !== sessionEpoch.current) return;
+      setProductAdminState({
+        ...emptyProductAdminState,
+        message: editingProductId
+          ? "Los cambios sí quedaron guardados, pero no pudimos actualizar el catálogo."
+          : "El producto sí quedó guardado, pero no pudimos actualizar el catálogo.",
+      });
+    }
+  }
+
+  function handleStockMovementDraftChange(update: Partial<MovementDraft>) {
+    setStockMovementState((current) => ({
+      ...current,
+      draft: { ...current.draft, ...update },
+      error: "",
+      message: "",
+    }));
+  }
+
+  async function handleStockMovementSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (
+      !supabase ||
+      role !== "administrator" ||
+      !session ||
+      signOutInProgress.current ||
+      stockMovementState.busy ||
+      stockMovementInFlight.current
+    ) {
+      return;
+    }
+
+    const { draft } = stockMovementState;
+    const quantity = Number(draft.quantity);
+    const validationError = !draft.productId.trim()
+      ? "Selecciona un producto."
+      : !Number.isSafeInteger(quantity)
+        ? "La cantidad debe ser un número entero seguro."
+        : draft.kind === "receipt" && quantity <= 0
+          ? "La entrada debe ser mayor que cero."
+          : draft.kind === "adjustment" && quantity === 0
+            ? "El ajuste debe ser distinto de cero."
+            : "";
+
+    if (validationError) {
+      setStockMovementState((current) => ({
+        ...current,
+        error: validationError,
+        message: "",
+      }));
+      return;
+    }
+
+    const actionEpoch = sessionEpoch.current;
+    stockMovementInFlight.current = true;
+    setStockMovementState((current) => ({ ...current, busy: true, error: "", message: "" }));
+
+    try {
+      if (draft.kind === "receipt") {
+        await receiveStock(supabase, {
+          productId: draft.productId,
+          quantity,
+          note: draft.note,
+        });
+      } else {
+        await adjustStock(supabase, {
+          productId: draft.productId,
+          quantityDelta: quantity,
+          note: draft.note,
+        });
+      }
+    } catch {
+      if (actionEpoch !== sessionEpoch.current) return;
+      stockMovementInFlight.current = false;
+      setStockMovementState((current) => ({
+        ...current,
+        busy: false,
+        error: "No pudimos registrar el movimiento. Revisa los datos y tus permisos; el borrador se conservó.",
+        message: "",
+      }));
+      return;
+    }
+
+    if (actionEpoch !== sessionEpoch.current) return;
+
+    setStockMovementState({
+      ...emptyStockMovementState,
+      busy: true,
+    });
+    const refreshGeneration = ++inventoryGeneration.current;
+
+    try {
+      const [catalog, page] = await Promise.all([
+        loadCatalog(supabase),
+        loadMovementPage(supabase, historyPage),
+      ]);
+      if (actionEpoch !== sessionEpoch.current) return;
+
+      if (refreshGeneration !== inventoryGeneration.current) {
+        setStockMovementState({
+          ...emptyStockMovementState,
+          message: "El movimiento quedó registrado. La vista se está actualizando.",
+        });
+        return;
+      }
+
+      setProducts(catalog);
+      setMovements(page.items);
+      setHasOlderMovements(page.hasNext);
+      setStockMovementState({
+        ...emptyStockMovementState,
+        message:
+          draft.kind === "receipt"
+            ? "Entrada registrada y vista actualizada."
+            : "Ajuste registrado y vista actualizada.",
+      });
+    } catch {
+      if (actionEpoch !== sessionEpoch.current) return;
+      setStockMovementState({
+        ...emptyStockMovementState,
+        message:
+          refreshGeneration === inventoryGeneration.current
+            ? "El movimiento quedó registrado, pero no pudimos actualizar el inventario y el historial. No lo registres de nuevo; actualiza la vista."
+            : "El movimiento quedó registrado. La vista se está actualizando.",
+      });
+    } finally {
+      if (actionEpoch === sessionEpoch.current) stockMovementInFlight.current = false;
+    }
+  }
+
   async function handleSignIn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!supabase || signInBusy) return;
@@ -131,9 +390,18 @@ export function HomeRoute({ client }: HomeRouteProps = {}) {
   }
 
   async function handleSignOut() {
-    if (!supabase) return;
+    if (!supabase || signOutInProgress.current) return;
+    signOutInProgress.current = true;
     const actionEpoch = ++sessionEpoch.current;
     loadGeneration.current += 1;
+    inventoryGeneration.current += 1;
+    setProducts([]);
+    setMovements([]);
+    setHasOlderMovements(false);
+    setHistoryPage(0);
+    setProductAdminState(emptyProductAdminState);
+    stockMovementInFlight.current = false;
+    setStockMovementState(emptyStockMovementState);
     setSignOutError("");
     try {
       await supabase.signOut();
@@ -148,6 +416,7 @@ export function HomeRoute({ client }: HomeRouteProps = {}) {
         setSignInBusy(false);
         setAppState("signed-out");
       }
+      signOutInProgress.current = false;
     }
   }
 
@@ -306,15 +575,35 @@ export function HomeRoute({ client }: HomeRouteProps = {}) {
           )}
 
           {appState === "ready" && session && role && (
-            <article className="rounded-3xl bg-white p-8 shadow-sm">
-              <h2 className="text-2xl font-semibold">Sesión verificada</h2>
-              <p className="mt-3 text-slate-700">
-                {currentOperator} · {roleLabel(role)}. Tu acceso al POS está listo.
-              </p>
-              <p className="mt-2 text-sm text-slate-600">
-                El inventario estará disponible en la próxima etapa.
-              </p>
-            </article>
+            <div className="space-y-8">
+              <h2 className="sr-only">Sesión verificada</h2>
+              {role === "administrator" && (
+                <ProductAdminForm
+                  products={products}
+                  state={productAdminState}
+                  onDraftChange={handleProductDraftChange}
+                  onSubmit={(event) => void handleProductSubmit(event)}
+                  onEditProduct={handleEditProduct}
+                  onCancelEdit={() => setProductAdminState(emptyProductAdminState)}
+                />
+              )}
+              {role === "administrator" && (
+                <StockMovementForm
+                  products={products}
+                  state={stockMovementState}
+                  onDraftChange={handleStockMovementDraftChange}
+                  onSubmit={(event) => void handleStockMovementSubmit(event)}
+                />
+              )}
+              <InventoryView products={products} operatorRoleLabel={roleLabel(role)} />
+              <MovementHistoryView
+                movements={movements}
+                productCount={products.length}
+                page={historyPage}
+                hasOlderMovements={hasOlderMovements}
+                onPageChange={setHistoryPage}
+              />
+            </div>
           )}
         </section>
       </div>
