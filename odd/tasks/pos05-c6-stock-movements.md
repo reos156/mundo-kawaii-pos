@@ -45,7 +45,7 @@ Store operators need a safe UI for recording stock receipts and signed adjustmen
 
 ## Tasks
 - [x] **C6-IMPLEMENT — Integrate and test administrator stock movements.** Work-unit commit `490590c` (`feat(pos): add admin stock movement controls`), exactly 632 changed lines across `home.tsx`, `stock-movement-form.tsx`, and its test; the user approved a `size:exception` for this exact slice. Strict TDD observed RED/GREEN, and the corrected candidate passed independent full-suite, typecheck, build, and parent spot-check evidence recorded below.
-- [~] **C6-CLOSE — Verify and record C6 completion.** Verification is complete; record exact evidence and commit identity in this feature file and the POS MVP ledger, then close with a scoped documentation/evidence commit.
+- [x] **C6-CLOSE — Verify and record C6 completion.** The corrected candidate passed full UI tests (38), typecheck, build, and parent spot-check; the POS MVP ledger and this feature record were committed as `4934fd3` (`docs(odd): record POS05-C6 completion`). Live Supabase integration remains pending and POS05-PUBLISH is a separate later task.
 
 ## Allowed implementation surfaces
 - `apps/pos-web/src/routes/home.tsx`
@@ -72,7 +72,7 @@ Parent-owned tracking surfaces:
 - [x] Created branch `feat/pos05-06-stock-movements` from the current C5 branch; no source files were modified by branch creation.
 - [x] Created and read back this feature document and its full Engram mirror (observation `1547`).
 - [x] Rebuilt the visible TODO projection from the two feature tasks.
-- [~] C6-IMPLEMENT — Integrate and test administrator stock movements.
+- [x] C6-IMPLEMENT — Integrated and tested administrator stock movements; work-unit commit `490590c`.
 - [x] The bounded writer observed TDD RED before production integration (27/28 focused tests passed with the missing route behavior failing), corrected one adjustment-input test expectation, then observed focused GREEN (5 files, 34 tests passed). The first post-integration run was 33/34 and failed only on that expectation; the corrected rerun passed.
 - [x] Initial independent verification (before the race correction) passed `bun run test --force` (7 files, 36 tests), `bun run typecheck --force`, and `bun run build --force`; build emitted the non-fatal React list-key warning in `home.test.tsx`. No live Supabase integration was run.
 - [x] Native ASSESS returned `unassessable` because the candidate contains untracked files. With RDD off, its plan treats the candidate as high risk and requires a separate independent verifier; the writer's focused self-verification and independent checks are recorded above.
@@ -83,7 +83,8 @@ Parent-owned tracking surfaces:
 - [x] The user approved a `size:exception` for this exact 632-line C6 child slice; no additional paths or work are covered.
 - [x] Parent spot-check reran `bun run test --force`; 7 files and 38 tests passed. The non-fatal `InventoryView` React key warning remains.
 - [x] Committed the verified application work unit as `490590c` (`feat(pos): add admin stock movement controls`); the commit contains only the three authorized C6 application paths (631 insertions, 1 deletion). The scoped staged-diff check passed.
-- [~] C6-CLOSE — Update the POS MVP ledger with C6 evidence and commit both ODD task records. No push, PR, or merge occurred.
+- [x] C6-CLOSE — The POS MVP ledger and feature evidence were committed in `4934fd3`; implementation commit `490590c` and the exact size exception are recorded.
+- [ ] POS05-PUBLISH remains pending; no push, PR, or merge occurred.
 
 ## Next step
-Record commit `490590c`, verification outcomes, and the exact size exception in `odd/tasks/mundo-kawaii-pos-mvp.md`; then commit the two ODD task records as a documentation/evidence work unit. Do not push, open a PR, or merge.
+C6 is complete locally. POS05-PUBLISH and live Supabase integration remain separate pending work; do not push, open a PR, or merge without the applicable user authorization.
